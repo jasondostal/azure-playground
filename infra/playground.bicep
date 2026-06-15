@@ -3,20 +3,18 @@ targetScope = 'subscription'
 // ═══════════════════════════════════════════════════════════════════════════
 // azure-playground — playground.bicep
 //
-// "Experiment with all the Azure things, quickly and cheaply."
+// One living monolith you bolt Azure services onto to learn them.
+//   • The BODY  = an App Service web app running the playground GUI.
+//   • The LIMB  = an optional second App Service web app (an API tier the GUI calls).
+//   • The BOLTS = opt-in services (SQL, Cosmos, Storage, Key Vault, Service Bus),
+//                 each on its cheapest tier, flipped on by the Makefile.
 //
-// The OPPOSITE of azure-ref-webapp-sql at every axis:
-//   • ONE resource group, ONE region, no environments — the RG is the unit of
-//     teardown (`make down` = az group delete).
-//   • PUBLIC endpoints — no private endpoints, no private DNS, and therefore NO
-//     self-hosted agent. Hosted agents / local az / Cloud Shell deploy directly.
-//   • Everything OPT-IN and scale-to-zero / serverless / cheapest tier, so an
-//     idle playground costs ~$0 even while it "stays active".
-//
-// Composes platform modules from ../../azure-platform-iac/modules (the canonical
-// source — same modules the production reference uses, just dialled to cheap).
-//
-// Flip services on with the Makefile:  make up SVC=sql,cosmos,storage
+// Hosting is App Service Free (F1) — $0/mo, zip-deployed from a pre-built
+// package (no containers, no registry). Only Azure SQL (Basic, ~$5/mo while it
+// exists) carries a standing cost. ONE resource group is the unit of teardown
+// (`make down` = az group delete). PUBLIC endpoints, no private DNS, no
+// self-hosted agent — a plain `az` login deploys it directly. Composes modules
+// from ../../azure-platform-iac/modules.
 // ═══════════════════════════════════════════════════════════════════════════
 
 @description('Azure region')
@@ -25,16 +23,26 @@ param location string = 'eastus'
 @description('Short base name for resources')
 param appName string = 'pg'
 
-@description('Tenant ID — only needed when enableKeyVault or enableSql (Entra) is on')
+@description('Tenant ID — only needed when enableKeyVault is on')
 param tenantId string = tenant().tenantId
 
-// ── Service toggles — default to the cheapest possible footprint ────────────
-// Baseline (enableContainerApp) = one scale-to-zero container app ≈ $0 idle.
-// Everything else is OFF until you want to play with it.
-
-@description('Deploy a scale-to-zero Container App (the baseline compute). minReplicas=0 → $0 when idle.')
+// ── The monolith body + its API limb ───────────────────────────────────────
+@description('Deploy the monolith web app (the playground body).')
 param enableContainerApp bool = true
 
+@description('Deploy the API limb — a second web app the GUI calls (for the latency exhibit etc.).')
+param enableApi bool = false
+
+@description('App Service Plan SKU. F1/Free = $0 (no Always-On). B1/Basic = ~$13/mo, supports Always-On.')
+param planSku string = 'F1'
+
+@description('App Service Plan tier matching planSku (Free | Basic | Standard).')
+param planTier string = 'Free'
+
+@description('.NET runtime stack for both apps.')
+param runtimeStack string = 'DOTNETCORE|10.0'
+
+// ── Bolt-on services — default OFF, cheapest tier when on ───────────────────
 @description('Deploy a Storage account (pay-per-use, ~$0 idle).')
 param enableStorage bool = false
 
@@ -44,23 +52,32 @@ param enableKeyVault bool = false
 @description('Deploy a Service Bus namespace (Basic tier — queues only).')
 param enableServiceBus bool = false
 
-@description('Deploy a Cosmos DB account (serverless — pay-per-request, $0 idle).')
+@description('Deploy a Cosmos DB account (serverless — pay-per-request, $0 idle). Read by the API limb via account key.')
 param enableCosmos bool = false
 
 @description('Deploy Azure SQL (Basic tier, ~$5/mo while it exists — turn it OFF when done).')
 param enableSql bool = false
 
-// ── Cheap container image for the baseline app (scales to zero) ─────────────
-@description('Container image for the baseline app. Default: the public hello-world sample (no ACR needed).')
-param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-
-// ── SQL (only used when enableSql) — classic auth for playground simplicity ──
+// ── SQL (classic auth for playground simplicity) ────────────────────────────
 @description('SQL admin login (only when enableSql).')
 param sqlAdminLogin string = 'pgadmin'
 
 @description('SQL admin password (only when enableSql — pass via Makefile, never commit).')
 @secure()
 param sqlAdminPassword string = ''
+
+// ── Deterministic resource names ────────────────────────────────────────────
+var rgId = subscriptionResourceId('Microsoft.Resources/resourceGroups', 'rg-${appName}-playground')
+var suffix = uniqueString(rgId)
+var sqlServerName = '${appName}-sql-${suffix}'
+var sqlDbName = '${appName}-db'
+var cosmosName = '${appName}-cosmos-${suffix}'
+var appServiceName = '${appName}-app-${suffix}'   // web app names are global DNS
+var apiServiceName = '${appName}-api-${suffix}'
+
+var sqlFqdn = '${sqlServerName}${environment().suffixes.sqlServerHostname}'
+var sqlConn = 'Server=tcp:${sqlFqdn},1433;Initial Catalog=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+var cosmosEndpoint = 'https://${cosmosName}.documents.azure.com:443/'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // One resource group — the whole playground, and the unit of teardown
@@ -77,46 +94,42 @@ resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Baseline compute — Container Apps (Consumption). Scale-to-zero = $0 idle.
-// No Log Analytics wired (keeps it free); consumption logging is enough to play.
+// Bolt-on services
 // ═══════════════════════════════════════════════════════════════════════════
 
-module acaEnv '../../azure-platform-iac/modules/compute/container-app-environment.bicep' = if (enableContainerApp) {
-  name: '${appName}-aca-env'
+module sqlServer '../../azure-platform-iac/modules/data/sql-server.bicep' = if (enableSql) {
+  name: '${appName}-sql'
   scope: rg
   params: {
-    name: '${appName}-aca-env'
+    name: sqlServerName
     location: location
+    adminLogin: sqlAdminLogin
+    adminPassword: sqlAdminPassword
+    disablePublicAccess: false   // public + firewall — playground
+    allowAzureServices: true     // let the App Services reach it
+    entraOnlyAuth: false         // classic SQL auth for quick connect
     environment: 'playground'
   }
 }
 
-module aca '../../azure-platform-iac/modules/compute/container-app.bicep' = if (enableContainerApp) {
-  name: '${appName}-aca'
+module sqlDb '../../azure-platform-iac/modules/data/sql-database.bicep' = if (enableSql) {
+  name: '${appName}-sqldb'
   scope: rg
   params: {
-    name: '${appName}-app'
+    name: sqlDbName
     location: location
-    environmentId: acaEnv.outputs.id
-    image: containerImage
-    targetPort: 80
-    external: true
-    minReplicas: 0        // scale to zero — the whole point
-    maxReplicas: 1
-    enableManagedIdentity: true
+    sqlServerName: sqlServer.outputs.name
+    skuName: 'Basic'
+    skuTier: 'Basic'
     environment: 'playground'
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Opt-in services — all public, all cheapest tier
-// ═══════════════════════════════════════════════════════════════════════════
 
 module storage '../../azure-platform-iac/modules/data/storage.bicep' = if (enableStorage) {
   name: '${appName}-storage'
   scope: rg
   params: {
-    name: replace('${appName}stg${uniqueString(rg.id)}', '-', '')
+    name: replace('${appName}stg${suffix}', '-', '')
     location: location
     sku: 'Standard_LRS'
     disablePublicAccess: false
@@ -128,11 +141,11 @@ module keyVault '../../azure-platform-iac/modules/security/key-vault.bicep' = if
   name: '${appName}-kv'
   scope: rg
   params: {
-    name: '${appName}-kv-${uniqueString(rg.id)}'
+    name: '${appName}-kv-${suffix}'
     location: location
     tenantId: tenantId
     sku: 'standard'
-    enablePurgeProtection: false   // playground — let it be hard-deleted
+    enablePurgeProtection: false
     disablePublicAccess: false
     environment: 'playground'
   }
@@ -142,7 +155,7 @@ module serviceBus '../../azure-platform-iac/modules/messaging/service-bus.bicep'
   name: '${appName}-sb'
   scope: rg
   params: {
-    name: '${appName}-sb-${uniqueString(rg.id)}'
+    name: '${appName}-sb-${suffix}'
     location: location
     sku: 'Basic'
     disablePublicAccess: false
@@ -150,55 +163,90 @@ module serviceBus '../../azure-platform-iac/modules/messaging/service-bus.bicep'
   }
 }
 
+// Cosmos — serverless, with local (key) auth enabled so the F1 API limb can
+// connect without a managed identity. The key itself is injected into the API's
+// app settings post-deploy by the Makefile (`az cosmosdb keys list`), because
+// reading it here via listKeys() is unsafe when Cosmos is toggled off.
 module cosmos '../../azure-platform-iac/modules/data/cosmos-db.bicep' = if (enableCosmos) {
   name: '${appName}-cosmos'
   scope: rg
   params: {
-    name: '${appName}-cosmos-${uniqueString(rg.id)}'
+    name: cosmosName
     location: location
-    serverless: true               // pay-per-request, $0 idle
+    serverless: true
     disablePublicAccess: false
+    disableLocalAuth: false      // F1 has no MI → use the account key
     databaseName: 'playground'
-    containerName: 'items'
+    containerName: 'members'
     partitionKeyPath: '/id'
     environment: 'playground'
   }
 }
 
-module sqlServer '../../azure-platform-iac/modules/data/sql-server.bicep' = if (enableSql) {
-  name: '${appName}-sql'
+// ═══════════════════════════════════════════════════════════════════════════
+// Compute — one App Service Plan, the API limb, and the monolith body
+// ═══════════════════════════════════════════════════════════════════════════
+
+module plan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableContainerApp || enableApi) {
+  name: '${appName}-asp'
   scope: rg
   params: {
-    name: '${appName}-sql-${uniqueString(rg.id)}'
+    name: '${appName}-asp'
     location: location
-    adminLogin: sqlAdminLogin
-    adminPassword: sqlAdminPassword
-    disablePublicAccess: false     // public + firewall — playground
-    allowAzureServices: true
-    entraOnlyAuth: false           // classic SQL auth for quick connect
+    skuName: planSku
+    skuTier: planTier
+    osKind: 'linux'
     environment: 'playground'
   }
 }
 
-module sqlDb '../../azure-platform-iac/modules/data/sql-database.bicep' = if (enableSql) {
-  name: '${appName}-sqldb'
+module api '../../azure-platform-iac/modules/compute/app-service.bicep' = if (enableApi) {
+  name: '${appName}-api'
   scope: rg
   params: {
-    name: '${appName}-db'
+    name: apiServiceName
     location: location
-    sqlServerName: sqlServer.outputs.name
-    skuName: 'Basic'
-    skuTier: 'Basic'
+    appServicePlanId: plan.outputs.id
+    runtimeStack: runtimeStack
+    alwaysOn: planTier != 'Free'   // F1 forbids Always-On; B1+ enables it
+    enableManagedIdentity: false   // F1: no managed identity
     environment: 'playground'
+    appSettings: {
+      SQL_CONNECTION: enableSql ? sqlConn : ''
+      COSMOS_ENDPOINT: enableCosmos ? cosmosEndpoint : ''
+      // COSMOS_KEY injected post-deploy by the Makefile (az cosmosdb keys list)
+    }
   }
 }
 
-// ── Outputs (only the enabled ones carry real values) ───────────────────────
+module app '../../azure-platform-iac/modules/compute/app-service.bicep' = if (enableContainerApp) {
+  name: '${appName}-app'
+  scope: rg
+  params: {
+    name: appServiceName
+    location: location
+    appServicePlanId: plan.outputs.id
+    runtimeStack: runtimeStack
+    alwaysOn: planTier != 'Free'
+    enableManagedIdentity: false
+    environment: 'playground'
+    appSettings: {
+      SQL_CONNECTION: enableSql ? sqlConn : ''
+      API_BASE: enableApi ? 'https://${api.outputs.defaultHostName}' : ''
+    }
+  }
+}
+
+// ── Outputs ─────────────────────────────────────────────────────────────────
 
 output resourceGroup string = rg.name
-output containerAppFqdn string = enableContainerApp ? aca.outputs.fqdn : ''
+output appServiceName string = enableContainerApp ? appServiceName : ''
+output apiServiceName string = enableApi ? apiServiceName : ''
+output appUrl string = enableContainerApp ? 'https://${app.outputs.defaultHostName}' : ''
+output apiUrl string = enableApi ? 'https://${api.outputs.defaultHostName}' : ''
+output sqlServerFqdn string = enableSql ? sqlServer.outputs.fqdn : ''
+output cosmosEndpoint string = enableCosmos ? cosmos.outputs.endpoint : ''
+output cosmosAccountName string = enableCosmos ? cosmosName : ''
 output storageName string = enableStorage ? storage.outputs.name : ''
 output keyVaultUri string = enableKeyVault ? keyVault.outputs.uri : ''
 output serviceBusEndpoint string = enableServiceBus ? serviceBus.outputs.endpoint : ''
-output cosmosEndpoint string = enableCosmos ? cosmos.outputs.endpoint : ''
-output sqlServerFqdn string = enableSql ? sqlServer.outputs.fqdn : ''

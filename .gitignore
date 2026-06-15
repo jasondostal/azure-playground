@@ -1,5 +1,11 @@
 # azure-playground
 infra/**/*.json
+infra/*.json
 *.env
 !.env.example
 .DS_Store
+
+# .NET build output
+**/bin/
+**/obj/
+dist/

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exhibit #1 — SSN reveal latency (The Taste Test)</title>
+<style>
+  :root {
+    --bg: oklch(0.17 0.02 265);
+    --panel: oklch(0.22 0.03 265);
+    --panel2: oklch(0.25 0.03 265);
+    --line: oklch(0.32 0.03 265);
+    --text: oklch(0.93 0.01 265);
+    --muted: oklch(0.68 0.02 265);
+    --accent: oklch(0.78 0.17 150);
+    --warn: oklch(0.8 0.15 75);
+    --gold: oklch(0.85 0.16 95);
+    --direct: oklch(0.72 0.16 230);
+    --apisql: oklch(0.78 0.17 150);
+    --apicosmos: oklch(0.72 0.18 300);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 1.5rem; }
+  a.back { color: var(--muted); text-decoration: none; font-size: .9rem; }
+  a.back:hover { color: var(--accent); }
+  h1 { font-size: 1.5rem; margin: .6rem 0 .2rem; }
+  .sub { color: var(--muted); margin: 0 0 1.4rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem 1.3rem; margin-bottom: 1.2rem; }
+  .banner { background: oklch(0.28 0.06 75); border: 1px solid var(--warn); color: var(--text);
+    border-radius: 10px; padding: .7rem 1rem; margin-bottom: 1.2rem; font-size: .92rem; }
+  code { background: var(--panel2); padding: .05rem .35rem; border-radius: 4px; font-size: .85em; }
+
+  /* The member record */
+  .member { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .member .who { font-weight: 600; font-size: 1.05rem; }
+  .member .who small { display: block; color: var(--muted); font-weight: 400; font-size: .8rem; }
+
+  /* Taste-test controls */
+  .controls { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin: .2rem 0 1.3rem; }
+  button { cursor: pointer; font: inherit; font-weight: 700; color: var(--bg);
+    background: var(--accent); border: 0; border-radius: 10px; padding: .7rem 1.3rem; font-size: 1.05rem; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 600; font-size: .95rem; padding: .5rem 1rem; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  /* The flip cards */
+  .arena { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  @media (max-width: 720px) { .arena { grid-template-columns: 1fr; } }
+  .card { perspective: 1000px; aspect-ratio: 3/4; }
+  .inner { position: relative; width: 100%; height: 100%; transition: transform .6s cubic-bezier(.2,.8,.3,1.2); transform-style: preserve-3d; }
+  .card.flip .inner { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px;
+    border: 1px solid var(--line); padding: 1rem; display: flex; flex-direction: column; }
+  .front { background: var(--panel2); align-items: center; justify-content: center; }
+  .front .q { font-size: 3rem; font-weight: 800; color: var(--muted); }
+  .front .nm { position: absolute; bottom: .8rem; left: 0; right: 0; text-align: center; color: var(--muted); font-size: .82rem; }
+  .back { background: var(--panel); transform: rotateY(180deg); justify-content: space-between; }
+  .back .nm { font-size: .82rem; color: var(--muted); display: flex; align-items: center; gap: .4rem; }
+  .swatch { width: .7rem; height: .7rem; border-radius: 3px; display: inline-block; }
+  .timer { font: 800 2.1rem/1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; text-align: center; margin: auto 0; }
+  .timer small { display: block; font-size: .8rem; font-weight: 500; color: var(--muted); margin-top: .35rem; }
+  .ssn { font: 600 1.15rem/1 ui-monospace, Menlo, monospace; letter-spacing: .05em; text-align: center; color: var(--accent); }
+  .card.win .back { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 22px oklch(0.85 0.16 95 / 0.35); }
+  .crown { position: absolute; top: -.7rem; right: -.5rem; font-size: 1.5rem; filter: drop-shadow(0 2px 3px #0008); }
+  .running .timer { color: var(--text); }
+  .settled .timer { color: var(--accent); }
+
+  /* verdict + benchmark */
+  .verdict { font-size: 1.05rem; margin-top: 1.2rem; padding: .9rem 1rem; border-radius: 10px;
+    background: oklch(0.25 0.05 150); border: 1px solid var(--accent); }
+  .verdict.hidden { display: none; }
+  .caveat { color: var(--muted); font-size: .86rem; margin-top: .8rem; border-left: 2px solid var(--warn); padding-left: .8rem; }
+  label.n { color: var(--muted); font-size: .9rem; }
+  input[type=number] { width: 5rem; font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .35rem .5rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: .82rem; }
+  .bar { height: 10px; border-radius: 999px; }
+  .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← back to the lab</a>
+  <h1>Exhibit #1 — SSN reveal latency · <span style="color:var(--accent)">The Taste Test</span></h1>
+  <p class="sub">Does an API tier in front of the database add latency a user would notice when unmasking an SSN? One click — all contenders flip, timers run, the numbers settle it.</p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="panel">
+    <div class="member">
+      <div class="who">
+        <span id="memberName">Member</span>
+        <small>Member lookup · record <span id="memberId">#1</span></small>
+      </div>
+      <div style="font:600 1.1rem ui-monospace,Menlo,monospace;color:var(--muted)">SSN&nbsp; ••• - •• - ••••</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="taste">🥤 Run the Taste Test</button>
+    <button id="reset" class="ghost">Reset</button>
+    <span id="status" style="color:var(--muted);font-size:.9rem"></span>
+  </div>
+
+  <div id="arena" class="arena"></div>
+
+  <div id="verdict" class="verdict hidden"></div>
+  <div class="caveat"><strong>The honest caveat:</strong> these are <em>warm</em> numbers (same region; keep one replica warm). What actually <em>can</em> cost seconds is a <em>cold start</em> from idle or a <em>cross-region</em> call — architectural choices you control, not inherent to "having an API."</div>
+
+  <div class="panel" style="margin-top:1.4rem">
+    <div class="row" style="justify-content:space-between">
+      <strong>Rigorous backup — steady-state benchmark</strong>
+      <div class="row">
+        <label class="n" for="n">samples/path</label>
+        <input id="n" type="number" value="50" min="1" max="500" />
+        <button id="bench" class="ghost">Run</button>
+      </div>
+    </div>
+    <div id="benchOut"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = ms => (ms == null ? "—" : ms.toFixed(1) + " ms");
+const PATHS = [
+  { key: "direct",    name: "Direct → Azure SQL", color: "var(--direct)",    ep: "/api/ssn/direct/" },
+  { key: "apiSql",    name: "API → Azure SQL",    color: "var(--apisql)",    ep: "/api/ssn/via-api-sql/" },
+  { key: "apiCosmos", name: "API → Cosmos",       color: "var(--apicosmos)", ep: "/api/ssn/via-api-cosmos/" },
+];
+let cfg = { sql: false, api: false, memberId: "1", memberName: "Member" };
+
+function buildCards() {
+  const arena = $("#arena");
+  arena.innerHTML = "";
+  for (const p of PATHS) {
+    const el = document.createElement("div");
+    el.className = "card";
+    el.id = "card-" + p.key;
+    el.innerHTML = `
+      <div class="inner">
+        <div class="face front">
+          <div class="q">?</div>
+          <div class="nm">${p.name}</div>
+        </div>
+        <div class="face back">
+          <div class="crown" hidden>🏆</div>
+          <div class="nm"><span class="swatch" style="background:${p.color}"></span>${p.name}</div>
+          <div class="timer">0.0<small>ms</small></div>
+          <div class="ssn">…</div>
+        </div>
+      </div>`;
+    arena.appendChild(el);
+  }
+}
+
+async function init() {
+  try { cfg = await (await fetch("/api/config")).json(); } catch {}
+  $("#memberName").textContent = cfg.memberName || "Member";
+  $("#memberId").textContent = "#" + (cfg.memberId || "1");
+  const missing = [];
+  if (!cfg.sql) missing.push("<code>enableSql</code>");
+  if (!cfg.api) missing.push("<code>enableApi</code> + <code>enableCosmos</code>");
+  if (missing.length) {
+    const b = $("#banner"); b.hidden = false;
+    b.innerHTML = "Some contenders aren't wired yet: " + missing.join(", ") +
+      ". Deploy with <code>make all SVC=sql,cosmos,api</code>.";
+  }
+  buildCards();
+}
+
+$("#reset").onclick = () => { buildCards(); $("#verdict").classList.add("hidden"); $("#status").textContent = ""; };
+
+$("#taste").onclick = async () => {
+  $("#taste").disabled = true;
+  $("#verdict").classList.add("hidden");
+  $("#status").textContent = "tasting…";
+  buildCards();
+
+  // flip all cards face-up in unison
+  PATHS.forEach(p => $("#card-" + p.key).classList.add("flip", "running"));
+
+  const t0 = performance.now();
+  const results = {};
+  const running = new Set(PATHS.map(p => p.key));
+
+  // live ticking timers
+  let raf;
+  const tick = () => {
+    const now = performance.now();
+    running.forEach(k => {
+      const t = $("#card-" + k + " .timer");
+      if (t) t.innerHTML = (now - t0).toFixed(1) + "<small>ms</small>";
+    });
+    if (running.size) raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+
+  // fire all contenders at once — it's a race
+  await Promise.all(PATHS.map(async p => {
+    const card = $("#card-" + p.key);
+    try {
+      const r = await (await fetch(p.ep + cfg.memberId)).json();
+      const rt = performance.now() - t0;
+      running.delete(p.key);
+      card.classList.remove("running"); card.classList.add("settled");
+      if (r.error) {
+        card.querySelector(".timer").innerHTML = "n/a";
+        card.querySelector(".ssn").textContent = r.error;
+        results[p.key] = null;
+      } else {
+        card.querySelector(".timer").innerHTML = rt.toFixed(1) + `<small>ms felt · ${fmt(r.serverMs)} server</small>`;
+        card.querySelector(".ssn").textContent = r.ssn || "(no value)";
+        results[p.key] = { rt, serverMs: r.serverMs, ssn: r.ssn };
+      }
+    } catch (e) {
+      running.delete(p.key);
+      card.classList.remove("running");
+      card.querySelector(".timer").innerHTML = "error";
+      results[p.key] = null;
+    }
+  }));
+  cancelAnimationFrame(raf);
+
+  // crown the fastest (by felt round-trip)
+  const finishers = Object.entries(results).filter(([, v]) => v);
+  if (finishers.length) {
+    const [winKey] = finishers.reduce((a, b) => (a[1].rt <= b[1].rt ? a : b));
+    const wc = $("#card-" + winKey);
+    wc.classList.add("win"); wc.querySelector(".crown").hidden = false;
+  }
+
+  // verdict
+  if (results.direct && results.apiSql) {
+    const delta = results.apiSql.serverMs - results.direct.serverMs;
+    $("#verdict").innerHTML = `The API tier added <strong>${delta >= 0 ? "+" : ""}${delta.toFixed(1)} ms</strong> over direct in-process SQL — the cost of the network hop. Both are far under the ~100&nbsp;ms a human perceives as instant.`;
+    $("#verdict").classList.remove("hidden");
+  }
+  $("#status").textContent = "";
+  $("#taste").disabled = false;
+};
+
+// ── rigorous backup benchmark ──
+$("#bench").onclick = async () => {
+  $("#bench").disabled = true;
+  const n = Math.max(1, Math.min(500, +$("#n").value || 50));
+  const out = $("#benchOut");
+  out.innerHTML = `<p style="color:var(--muted)">running ${n} samples per path…</p>`;
+  try { renderBench(await (await fetch(`/api/bench?n=${n}`)).json()); }
+  catch (e) { out.innerHTML = `<p style="color:var(--warn)">benchmark failed: ${e}</p>`; }
+  $("#bench").disabled = false;
+};
+
+function renderBench(data) {
+  const rows = PATHS.map(p => ({ ...p, s: data[p.key] })).filter(r => r.s);
+  if (!rows.length) { $("#benchOut").innerHTML = `<p style="color:var(--warn)">nothing measured.</p>`; return; }
+  const maxAvg = Math.max(...rows.map(r => r.s.avg));
+  let html = `<table><thead><tr><th>path</th><th>min</th><th>p50</th><th>avg</th><th>p95</th><th>max</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr>
+      <td><span class="swatch" style="background:${r.color}"></span> ${r.name}</td>
+      <td>${fmt(r.s.min)}</td><td>${fmt(r.s.p50)}</td><td>${fmt(r.s.avg)}</td><td>${fmt(r.s.p95)}</td><td>${fmt(r.s.max)}</td></tr>
+      <tr><td colspan="6" style="padding-top:0;border:0"><div class="bar" style="width:${Math.max(3, 100*r.s.avg/maxAvg)}%;background:${r.color}"></div></td></tr>`;
+  }
+  $("#benchOut").innerHTML = html + `</tbody></table>`;
+}
+
+init();
+</script>
+</body>
+</html>

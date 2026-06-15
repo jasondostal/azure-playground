@@ -1,53 +1,65 @@
 # azure-playground
 
-A cheap, always-available sandbox for experimenting with Azure services. Flip a service on, play with it, turn it off. The opposite of a production reference — public endpoints, one resource group, cheapest possible tiers.
+My proud little Azure frankenstein. One living web app you bolt Azure services onto to learn them — flip a service on, build an exhibit against it, leave it (or rip it off). Does it *need* a service bus stapled to its forehead? No. But here we are.
 
-It composes the **same** Bicep modules as the production reference ([azure-platform-iac](../azure-platform-iac)), just dialled to cheap. So what you prove here maps directly onto the real thing.
+The opposite of a production reference: **public endpoints, one resource group, cheapest possible tiers**. It composes the **same** Bicep modules as the production reference ([azure-platform-iac](../azure-platform-iac)) — just dialled to cheap — so what you prove here maps onto the real thing.
 
-## Cost model: ~$0 at rest
+## Anatomy
 
-The baseline is one **scale-to-zero Container App** — `minReplicas=0`, so it costs nothing when nothing is hitting it. Every other service is **opt-in** and on its cheapest tier:
+| Part | What it is |
+|------|-----------|
+| **Body** | An App Service web app (`src/app`) — the GUI, the lab home, the exhibits. |
+| **Limb** | An optional second App Service web app (`src/api`) — an API tier the GUI calls. |
+| **Bolts** | Opt-in services (SQL, Cosmos, Storage, Key Vault, Service Bus), cheapest tier, flipped on by the Makefile. |
+
+Both apps are .NET 10, hosted on **App Service Free (F1)** — no containers, no image registry. Code is published locally and **zip-deployed** (server-side it just runs the package).
+
+## Cost model
+
+Everything is ~$0 at rest **except Azure SQL** (Basic ≈ $5/mo while it exists — turn it off when done).
 
 | Service | Tier | Idle cost |
 |---------|------|-----------|
-| Container App (baseline) | Consumption, scale-to-zero | ~$0 |
+| App Service (body + limb) | **F1 Free** | **$0** |
 | Cosmos DB | serverless (pay-per-request) | ~$0 |
 | Storage | Standard_LRS (pay-per-use) | ~$0 |
-| Key Vault | standard (pay-per-op) | ~pennies |
-| Service Bus | Basic | ~pennies |
-| Azure SQL | Basic | **~$5/mo while it exists** — turn it off when done |
+| Key Vault / Service Bus | standard / Basic | ~pennies |
+| Azure SQL | Basic | **~$5/mo while it exists** |
 
-Only Azure SQL has a standing cost (the Basic tier isn't serverless). Leave it off unless you're actively using it. Everything else can "stay active" for roughly nothing.
+`WARM=1` upgrades the plan to **B1 (~$13/mo)** with Always-On — use it only when you want zero cold-start (e.g. a clean latency demo). F1 cold-starts on first hit; for the latency exhibit that doesn't matter (the benchmark warms each path before measuring).
+
+## Prerequisites
+
+- `az` logged into the target subscription (`az login`)
+- .NET 10 SDK locally (`~/.dotnet` — `dotnet build` / `publish`)
+- `make`, `zip`
 
 ## Usage
 
 ```bash
-make up                      # baseline: scale-to-zero container app
-make up SVC=cosmos,storage   # + Cosmos (serverless) + Storage
-make up SVC=sql SQL_PASSWORD='S0me-Str0ng-Pass!'   # + Azure SQL (Basic)
-make whatif SVC=sb           # preview first
-make status                  # what's deployed
-make down                    # delete the whole RG — total teardown
+make all SVC=sql,cosmos,api WARM=1 SQL_PASSWORD='S0me-Str0ng-Pass!'  # exhibit #1, warm
+# …or step by step:
+make up      SVC=sql,cosmos,api          # deploy infra (plan + apps + bolts)
+make publish                              # build + zip both apps
+make deploy                               # push code, inject Cosmos key, print URL
+
+make whatif  SVC=sql,cosmos,api           # preview the infra diff first
+make status                               # what's deployed
+make outputs                              # app URL + endpoints
+make down                                 # delete the whole RG — total teardown
 ```
 
-Services: `sql` · `cosmos` · `storage` · `kv` · `sb` · `aca` (baseline).
-
-Everything lands in one resource group, `rg-pg-playground`. `make down` is `az group delete` on that group — the whole playground vanishes in one call.
+Services: `sql` · `cosmos` · `storage` · `kv` · `sb` · `api` · `aca` (the body).
+Everything lands in one resource group, `rg-pg-playground`; `make down` deletes it whole.
 
 ## Why public (and why no self-hosted agent)
 
-The production reference is private-by-default, which forces private endpoints + a self-hosted VNet agent. That's correct for prod and wrong for a playground: it adds cost, DNS, and a deploy agent you have to babysit. The playground goes **public** (firewall to your IP where it matters), so a plain `az` login — local, Cloud Shell, or a hosted pipeline agent — deploys it directly. Fast in, fast out.
+The production reference is private-by-default, which forces private endpoints + a self-hosted VNet agent. Correct for prod, wrong for a playground. The playground goes **public** so a plain `az` login deploys it directly. Fast in, fast out.
 
-## Where it sits
+## Exhibits
 
-| Repo | Role |
-|------|------|
-| [azure-platform-iac](../azure-platform-iac) | engine — the modules this consumes |
-| [azure-project-starter](../azure-project-starter) | factory — generate a real project |
-| [azure-iac-patterns](../azure-iac-patterns) | clean standalone module library |
-| [azure-ref-webapp-sql](../azure-ref-webapp-sql) | example #1 — the production-shaped monolith (deploy-to-prove, then delete) |
-| **azure-playground** (this repo) | example #2 — the cheap, always-on sandbox |
+See [EXHIBITS.md](EXHIBITS.md) for the running log of what's been bolted on. Exhibit #1: **SSN reveal latency** — does fronting a database with an API "take seconds"? (No.)
 
-## Adding a service
+## Adding a service / exhibit
 
-Each toggle in `infra/playground.bicep` is a `if (enableX)` module pointing at a platform module. To add one: reference the platform module, add an `enableX` param, wire a `case` into the `Makefile`. The platform modules already cover Functions, Event Grid, AI Foundry, APIM (use **Consumption** tier — Developer is slow and ~$50/mo), and more.
+Each toggle in `infra/playground.bicep` is an `if (enableX)` module pointing at a platform module. New exhibit = a page under `src/app/wwwroot/exhibits/`, its endpoints in `src/app/Program.cs` (and `src/api` if it needs the limb), and flip whatever `enableX` bolt it depends on. The platform modules already cover Functions, Event Grid, AI Foundry, APIM, and more.
