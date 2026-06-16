@@ -2,8 +2,13 @@
 
 One subscription, **two resource groups**, three exhibits. Everything is created by a single
 `make all` from the subscription-scoped `infra/playground.bicep`; `make down` deletes both
-resource groups. A colorized export lives alongside this file as
-[`playground-architecture.svg`](playground-architecture.svg).
+resource groups.
+
+![azure-playground architecture](playground-architecture.png)
+
+> Colorized exports: [`playground-architecture.png`](playground-architecture.png) (above) and
+> [`playground-architecture.svg`](playground-architecture.svg) (vector). The live Mermaid source
+> below renders on GitHub directly.
 
 ```mermaid
 flowchart TB
