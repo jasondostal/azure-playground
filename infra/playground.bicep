@@ -282,7 +282,7 @@ module functions '../../azure-platform-iac/modules/compute/function-app.bicep' =
     appServicePlanId: plan.outputs.id
     storageAccountName: storageName
     runtimeStack: 'dotnet-isolated'
-    runtimeVersion: '10.0'
+    runtimeVersion: '9'    // .NET 10 isolated Functions image isn't published on Linux yet; 9 is GA
     alwaysOn: true
     identityBasedStorage: false   // use the storage key (simplest)
     environment: 'playground'
