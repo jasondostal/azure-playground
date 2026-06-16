@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exhibit #3 — Nervous System</title>
+<style>
+  :root{
+    --bg:oklch(0.17 0.02 265);--panel:oklch(0.22 0.03 265);--panel2:oklch(0.25 0.03 265);
+    --line:oklch(0.32 0.03 265);--text:oklch(0.93 0.01 265);--muted:oklch(0.68 0.02 265);
+    --accent:oklch(0.78 0.17 150);--accent2:oklch(0.72 0.18 300);--warn:oklch(0.8 0.15 75);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:1.5rem}
+  a.back{color:var(--muted);text-decoration:none;font-size:.9rem}a.back:hover{color:var(--accent)}
+  h1{font-size:1.5rem;margin:.6rem 0 .2rem}h2{font-size:1.05rem;margin:1.4rem 0 .6rem}
+  .sub{color:var(--muted);margin:0 0 1.2rem}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1.1rem}
+  .banner{background:oklch(0.28 0.06 75);border:1px solid var(--warn);border-radius:10px;padding:.7rem 1rem;margin-bottom:1.1rem;font-size:.92rem}
+  code{background:var(--panel2);padding:.1rem .4rem;border-radius:4px;font-size:.85em;word-break:break-all}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.7rem .9rem;overflow:auto;font-size:.8rem;line-height:1.45}
+  ol.reflex{padding-left:1.1rem}ol.reflex>li{margin:.7rem 0}
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th,td{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:.8rem}
+  .num{color:var(--accent2);font-weight:700}
+  .tag{display:inline-block;font-size:.72rem;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:.05rem .5rem;margin-right:.3rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← back to the lab</a>
+  <h1>Exhibit #3 — Nervous System</h1>
+  <p class="sub">The "ESB" that isn't. One Function App + Service Bus proves the five integration reflexes. <strong>A trigger fires a function; the function reads or writes the bus.</strong> Every integration is a variation on that sentence.</p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">The five reflexes</h2>
+    <table>
+      <thead><tr><th>#</th><th>pattern</th><th>trigger → action</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Webhook ingress (two paths)</td><td><code>WebhookDirect</code> (HTTP) &amp; <code>EventGridIngress</code> (Event Grid) → queue <code>ingress</code></td></tr>
+        <tr><td class="num">2</td><td>Synchronous API</td><td><code>ApiGet</code> / <code>ApiPost</code> (HTTP) ↔ Cosmos</td></tr>
+        <tr><td class="num">3</td><td>Pub/sub fan-out</td><td>publish → topic <code>events</code> → <code>ConsumerA</code> + <code>ConsumerB</code> (both get a copy)</td></tr>
+        <tr><td class="num">4</td><td>Queue → adapter → external</td><td><code>QueueToTarget</code> (SB queue) → POST to the API limb</td></tr>
+        <tr><td class="num">5</td><td>DB change → event</td><td><code>CosmosChangeFeed</code> → queue <code>db-events</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Prove each reflex</h2>
+    <p class="sub" style="margin:.2rem 0 .8rem">Functions URL: <code id="fnurl">(deploy with <code>fn</code>, then it appears here)</code></p>
+    <ol class="reflex">
+      <li><strong>Webhook (HTTP):</strong><pre id="c-webhook">curl -X POST &lt;FN&gt;/api/webhook -H 'content-type: application/json' -d '{"hello":"bus"}'</pre></li>
+      <li><strong>Webhook (Event Grid):</strong> publish a CloudEvent to <code id="egep">&lt;EVENTGRID_ENDPOINT&gt;</code> — lands in the same <code>ingress</code> queue.</li>
+      <li><strong>API round-trip:</strong><pre id="c-items">curl -X POST &lt;FN&gt;/api/items -H 'content-type: application/json' -d '{"id":"a1","name":"demo"}'
+curl &lt;FN&gt;/api/items/a1</pre></li>
+      <li><strong>Fan-out (needs <code>SB_TOPICS=1</code>):</strong><pre id="c-pub">curl -X POST &lt;FN&gt;/api/publish -d '{"evt":"hi"}'   # ConsumerA &amp; ConsumerB both get it</pre></li>
+      <li><strong>Adapter &amp; change feed:</strong> a message on <code>to-target</code> is POSTed to the API limb; a new doc via <code>ApiPost</code> fires <code>CosmosChangeFeed</code> → <code>db-events</code>. Watch both in Application Insights.</li>
+    </ol>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Architecture</h2>
+    <pre>WebhookDirect ─┐
+EventGridIngress ┴─▶ [queue: ingress]
+ApiGet/ApiPost ⇄ (Cosmos)
+(Cosmos change feed) ─▶ CosmosChangeFeed ─▶ [queue: db-events]
+publish ─▶ {topic: events} ─▶ ConsumerA (sub-a)
+                            └▶ ConsumerB (sub-b)
+[queue: to-target] ─▶ QueueToTarget ─▶ HTTP POST ─▶ API limb</pre>
+    <p class="sub" style="margin:.6rem 0 0"><span class="tag">Functions (Consumption)</span><span class="tag">Service Bus</span><span class="tag">Event Grid</span><span class="tag">Cosmos</span><span class="tag">App Insights</span> — ~$0 at rest; Service Bus Standard (only with <code>SB_TOPICS=1</code>) ~$0.0135/hr. <code>make down</code> reclaims everything.</p>
+  </div>
+</div>
+
+<script>
+(async () => {
+  let cfg = {};
+  try { cfg = await (await fetch('/api/config')).json(); } catch {}
+  const fn = (cfg.functionsUrl || '').replace(/\/$/, '');
+  if (fn) {
+    document.getElementById('fnurl').textContent = fn;
+    for (const id of ['c-webhook','c-items','c-pub']) {
+      const el = document.getElementById(id); el.textContent = el.textContent.replaceAll('<FN>', fn);
+    }
+  } else {
+    document.getElementById('banner').hidden = false;
+    document.getElementById('banner').innerHTML = "Integration tier not deployed. Bring it up with <code>make all SVC=storage,kv,cosmos,sb,eg,fn,api SB_TOPICS=1</code>, then this page fills in your live URLs.";
+  }
+  if (cfg.eventGridEndpoint) document.getElementById('egep').textContent = cfg.eventGridEndpoint;
+})();
+</script>
+</body>
+</html>

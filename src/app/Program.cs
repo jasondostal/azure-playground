@@ -53,6 +53,8 @@ app.MapGet("/api/config", () => Results.Json(new
     cosmos = cosmosDirect is not null,
     api = http.BaseAddress is not null,
     serviceBus = sbClient is not null,
+    functionsUrl = Environment.GetEnvironmentVariable("FUNCTIONS_BASEURL") ?? "",
+    eventGridEndpoint = Environment.GetEnvironmentVariable("EVENTGRID_ENDPOINT") ?? "",
     memberId = Db.MemberId,
     memberName = Db.MemberName,
 }));

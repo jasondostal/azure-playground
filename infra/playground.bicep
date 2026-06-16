@@ -58,6 +58,15 @@ param enableCosmos bool = false
 @description('Deploy Azure SQL (Basic tier, ~$5/mo while it exists — turn it OFF when done).')
 param enableSql bool = false
 
+@description('Deploy the integration tier — an Azure Functions app (Consumption/Y1, scale-to-zero). Requires enableStorage.')
+param enableFunctions bool = false
+
+@description('Deploy an Event Grid custom topic (Exhibit #3 ingress path).')
+param enableEventGrid bool = false
+
+@description('Service Bus topics + subscriptions for fan-out (Exhibit #3 scenario 3). Forces Service Bus to Standard (~$0.0135/hr while up). Basic (queues only) when false.')
+param enableTopics bool = false
+
 // ── SQL (classic auth for playground simplicity) ────────────────────────────
 @description('SQL admin login (only when enableSql).')
 param sqlAdminLogin string = 'pgadmin'
@@ -78,6 +87,10 @@ var sqlDbName = '${appName}-db'
 var cosmosName = '${appName}-cosmos-${suffix}'
 var appServiceName = '${appName}-app-${suffix}'   // web app names are global DNS
 var apiServiceName = '${appName}-api-${suffix}'
+var functionsName = '${appName}-fn-${suffix}'
+var storageName = replace('${appName}stg${suffix}', '-', '')
+var eventGridName = '${appName}-egt-${suffix}'
+var sbSku = enableTopics ? 'Standard' : 'Basic'
 
 var sqlFqdn = '${sqlServerName}${environment().suffixes.sqlServerHostname}'
 var sqlConn = 'Server=tcp:${sqlFqdn},1433;Initial Catalog=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
@@ -133,7 +146,7 @@ module storage '../../azure-platform-iac/modules/data/storage.bicep' = if (enabl
   name: '${appName}-storage'
   scope: rg
   params: {
-    name: replace('${appName}stg${suffix}', '-', '')
+    name: storageName
     location: location
     sku: 'Standard_LRS'
     disablePublicAccess: false
@@ -162,7 +175,7 @@ module serviceBus '../../azure-platform-iac/modules/messaging/service-bus.bicep'
   params: {
     name: sbNamespaceName
     location: location
-    sku: 'Basic'
+    sku: sbSku
     disablePublicAccess: false
     disableLocalAuth: false   // demo: use the SAS connection string
     environment: 'playground'
@@ -247,6 +260,56 @@ module app '../../azure-platform-iac/modules/compute/app-service.bicep' = if (en
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Exhibit #3 — the integration tier (Functions on Consumption + Event Grid).
+// SB entities, Cosmos containers, App Insights, the EG→function subscription,
+// and connection settings are wired post-deploy by the Makefile (idempotent CLI).
+// ═══════════════════════════════════════════════════════════════════════════
+
+module fnPlan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableFunctions) {
+  name: '${appName}-fnplan'
+  scope: rg
+  params: {
+    name: '${appName}-fnplan'
+    location: location
+    skuName: 'Y1'           // Consumption — scale-to-zero
+    skuTier: 'Dynamic'
+    osKind: 'linux'
+    environment: 'playground'
+  }
+}
+
+module functions '../../azure-platform-iac/modules/compute/function-app.bicep' = if (enableFunctions) {
+  name: '${appName}-fn'
+  scope: rg
+  dependsOn: [storage]
+  params: {
+    name: functionsName
+    location: location
+    appServicePlanId: fnPlan.outputs.id
+    storageAccountName: storageName
+    runtimeStack: 'dotnet-isolated'
+    runtimeVersion: '10.0'
+    identityBasedStorage: false   // use the storage key (simplest on Consumption)
+    environment: 'playground'
+    appSettings: {
+      // Connection strings + AI + target injected post-deploy by the Makefile.
+      TARGET_API_BASEURL: enableApi ? 'https://${api.outputs.defaultHostName}' : ''
+    }
+  }
+}
+
+module eventGrid '../../azure-platform-iac/modules/messaging/eventgrid-topic.bicep' = if (enableEventGrid) {
+  name: '${appName}-egt'
+  scope: rg
+  params: {
+    name: eventGridName
+    location: location
+    inputSchema: 'CloudEventSchemaV1_0'
+    environment: 'playground'
+  }
+}
+
 // ── Outputs ─────────────────────────────────────────────────────────────────
 
 output resourceGroup string = rg.name
@@ -261,3 +324,7 @@ output storageName string = enableStorage ? storage.outputs.name : ''
 output keyVaultUri string = enableKeyVault ? keyVault.outputs.uri : ''
 output serviceBusEndpoint string = enableServiceBus ? serviceBus.outputs.endpoint : ''
 output serviceBusNamespace string = enableServiceBus ? sbNamespaceName : ''
+output functionsName string = enableFunctions ? functionsName : ''
+output functionsUrl string = enableFunctions ? 'https://${functions.outputs.defaultHostName}' : ''
+output eventGridName string = enableEventGrid ? eventGridName : ''
+output eventGridEndpoint string = enableEventGrid ? eventGrid.outputs.endpoint : ''

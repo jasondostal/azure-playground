@@ -25,6 +25,7 @@ SQL_PASSWORD ?=
 API_SECRET   ?=
 EASYAUTH_SECRET ?=
 WARM         ?=
+SB_TOPICS    ?=
 DOTNET       := $(shell command -v dotnet 2>/dev/null || echo $(HOME)/.dotnet/dotnet)
 
 define svc_to_params
@@ -38,11 +39,14 @@ for s in $$(echo "$(SVC)" | tr ',' ' '); do \
     sb|servicebus)  extra="$$extra enableServiceBus=true";; \
     api)            extra="$$extra enableApi=true";; \
     aca|app)        extra="$$extra enableContainerApp=true";; \
+    fn|functions)   extra="$$extra enableFunctions=true";; \
+    eg|eventgrid)   extra="$$extra enableEventGrid=true";; \
     "")             ;; \
-    *) echo "unknown service: $$s (valid: sql cosmos storage kv sb api aca)" >&2; exit 1;; \
+    *) echo "unknown service: $$s (valid: sql cosmos storage kv sb api aca fn eg)" >&2; exit 1;; \
   esac; \
 done; \
-[ -n "$(WARM)" ] && extra="$$extra planSku=B1 planTier=Basic"
+[ -n "$(WARM)" ] && extra="$$extra planSku=B1 planTier=Basic"; \
+[ -n "$(SB_TOPICS)" ] && extra="$$extra enableTopics=true"
 endef
 
 # Publish one app (src/$(1), project Playground.$(2)) into dist/$(1).zip.
@@ -57,10 +61,11 @@ endef
 
 .PHONY: publish up deploy all whatif status outputs down help
 
-publish: ## Build + publish both apps to ./dist (local dotnet)
+publish: ## Build + publish the apps to ./dist (local dotnet)
 	@mkdir -p dist
 	$(call do_publish,api,Api)
 	$(call do_publish,app,App)
+	$(call do_publish,functions,Functions)
 
 up: ## Deploy infra (App Service plan + apps + any SVC=... bolts)
 	@$(svc_to_params); \
@@ -78,6 +83,8 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	API=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.apiServiceName.value -o tsv); \
 	COSMOS=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.cosmosAccountName.value -o tsv); \
 	SBNS=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.serviceBusNamespace.value -o tsv); \
+	FNURL=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.functionsUrl.value -o tsv); \
+	EGEP=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.eventGridEndpoint.value -o tsv); \
 	KEY=""; SBCONN=""; \
 	if [ -n "$$COSMOS" ]; then KEY=$$(az cosmosdb keys list -g $(RG) -n "$$COSMOS" --query primaryMasterKey -o tsv); fi; \
 	if [ -n "$$SBNS" ]; then SBCONN=$$(az servicebus namespace authorization-rule keys list -g $(RG) --namespace-name "$$SBNS" --name RootManageSharedAccessKey --query primaryConnectionString -o tsv); fi; \
@@ -93,11 +100,13 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	  [ -n "$$KEY" ] && { echo ">> Cosmos key → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings COSMOS_KEY="$$KEY" -o none; }; \
 	  [ -n "$$SBCONN" ] && { echo ">> SB conn → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings SERVICEBUS_CONNECTION="$$SBCONN" -o none; }; \
 	  [ -n "$(EASYAUTH_SECRET)" ] && { echo ">> Easy Auth secret → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings MICROSOFT_PROVIDER_AUTHENTICATION_SECRET="$(EASYAUTH_SECRET)" -o none; }; \
+	  [ -n "$$FNURL" ] && az webapp config appsettings set -g $(RG) -n "$$APP" --settings FUNCTIONS_BASEURL="$$FNURL" EVENTGRID_ENDPOINT="$$EGEP" -o none; \
 	fi; \
 	echo ">> live at: $$(az deployment sub show -n $(DEPLOY) --query properties.outputs.appUrl.value -o tsv)"
+	@bash scripts/wire-functions.sh
 
 all: ## up + publish + deploy in one shot
-	$(MAKE) up SVC="$(SVC)" WARM="$(WARM)" SQL_PASSWORD="$(SQL_PASSWORD)" API_SECRET="$(API_SECRET)"
+	$(MAKE) up SVC="$(SVC)" WARM="$(WARM)" SB_TOPICS="$(SB_TOPICS)" SQL_PASSWORD="$(SQL_PASSWORD)" API_SECRET="$(API_SECRET)"
 	$(MAKE) publish
 	$(MAKE) deploy EASYAUTH_SECRET="$(EASYAUTH_SECRET)"
 

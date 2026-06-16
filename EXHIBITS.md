@@ -72,3 +72,36 @@ make all SVC=sql,cosmos,api,sb WARM=1 SQL_PASSWORD='...' API_SECRET='...'
 All client-felt (same LAN-browser vantage, apples-to-apples). ~7× the API tier at best; naive polling crosses **a full second** (~18×) — the literal "seconds," delivered by the wrong tool. Basic tier has no sessions to correlate replies cleanly, so request/reply over the queue also **occasionally loses replies** — slow *and* unreliable. Queues are for async decoupling, not answering a user who's waiting. Graphic generator: [`docs/servicebus-chart.html`](docs/servicebus-chart.html).
 
 **Status:** live and measured.
+
+---
+
+## #3 — Nervous System (the "ESB" that isn't)
+
+**Question:** Everyone wants an ESB. Do you need a heavy integration suite, or does a Function App + Service Bus cover the real patterns? (Spoiler: a couple of resources.)
+
+**What it bolts on:** `fn` (Functions, Consumption/Y1), `eg` (Event Grid), `sb` (Service Bus), reusing `storage`, `cosmos`. Plus an Application Insights component. Everything flips on via the Makefile, lands in `rg-pg-playground`, scales to zero.
+
+**The five reflexes** (each a copyable function in `src/functions`):
+
+| # | Pattern | Trigger → action |
+|---|---------|------------------|
+| 1 | Webhook ingress (both paths) | `WebhookDirect` (HTTP) and `EventGridIngress` (Event Grid) → queue `ingress` |
+| 2 | Synchronous API | `ApiGet` / `ApiPost` (HTTP) ↔ Cosmos |
+| 3 | Pub/sub fan-out | publish → topic `events` → `ConsumerA` + `ConsumerB` (both get a copy) |
+| 4 | Queue → adapter → external | `QueueToTarget` (SB queue) → POST to the `src/api` limb |
+| 5 | DB change → event | `CosmosChangeFeed` → queue `db-events` |
+
+`A trigger fires a function; the function reads or writes the bus.` Every integration is a variation on that sentence.
+
+**Cost:** ~$0 at rest. Functions on Consumption, Service Bus **Basic** (queues) by default. Fan-out (#3) needs **Standard**, ~$0.0135/hr — a 1–2 hr proving run is pennies. Flip with `SB_TOPICS=1`, run, `make down`.
+
+**Run it:**
+```
+make all SVC=storage,kv,cosmos,sb,eg,fn,api SB_TOPICS=1   # full demo incl. fan-out
+make outputs                                              # Functions URL + Event Grid endpoint
+make down                                                 # reclaim everything
+```
+
+Post-deploy provisioning (SB entities, Cosmos `items`/`leases` containers, App Insights, connection settings, the Event Grid → function subscription) is handled idempotently by `scripts/wire-functions.sh`, called from `make deploy`.
+
+**Status:** built; first live run pending.
