@@ -58,7 +58,7 @@ The production reference is private-by-default, which forces private endpoints +
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the full topology (two resource groups, all services, and how the three exhibits flow through them).
+See [docs/playground-architecture.md](docs/playground-architecture.md) for the full topology (two resource groups, all services, and how the three exhibits flow through them).
 
 ## Exhibits
 

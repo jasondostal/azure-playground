@@ -1,8 +1,9 @@
-# azure-playground — architecture
+# azure-playground — system architecture
 
-One subscription, **two resource groups**, three exhibits. Everything is created by a
-single `make all` from the subscription-scoped `infra/playground.bicep`, and `make down`
-deletes both resource groups.
+One subscription, **two resource groups**, three exhibits. Everything is created by a single
+`make all` from the subscription-scoped `infra/playground.bicep`; `make down` deletes both
+resource groups. A colorized export lives alongside this file as
+[`playground-architecture.svg`](playground-architecture.svg).
 
 ```mermaid
 flowchart TB
@@ -25,14 +26,14 @@ flowchart TB
         QDB[[db-events]]
         QREQ[[reveal-requests]]
         QREP[[reveal-replies]]
-        TOP{{"topic: events<br/>sub-a · sub-b"}}
+        TOP{{"topic: events / sub-a · sub-b"}}
       end
       EGT(["Event Grid topic"])
       AI[("App Insights")]
     end
 
     subgraph RG2["rg-pg-playground-fn"]
-      subgraph YP["Consumption plan (Y1) · scale-to-zero"]
+      subgraph YP["Consumption (Y1) · scale-to-zero"]
         FN["Functions — .NET 9 isolated<br/>WebhookDirect · EventGridIngress<br/>ApiGet · ApiPost · Publish<br/>ConsumerA · ConsumerB<br/>QueueToTarget · CosmosChangeFeed"]
       end
     end
@@ -65,7 +66,26 @@ flowchart TB
   QTGT --> FN
   FN -->|"#3 adapter"| API
   FN -.-> AI
+
+  classDef compute fill:#143b2a,stroke:#4ad98a,color:#eafff4;
+  classDef data fill:#10243b,stroke:#4a90d9,color:#e9f3ff;
+  classDef bus fill:#3b2a10,stroke:#d9a14a,color:#fff3e0;
+  classDef integ fill:#2a1340,stroke:#a14ad9,color:#f3e9ff;
+  classDef client fill:#1f232b,stroke:#9aa,color:#fff;
+  class WEB,API,FN compute;
+  class SQL,COS data;
+  class QING,QTGT,QDB,QREQ,QREP,TOP bus;
+  class EGT,AI integ;
+  class USER client;
+  style RG1 fill:#0f1620,stroke:#3a4a5a,color:#cfe;
+  style RG2 fill:#160f20,stroke:#5a3a5a,color:#ecf;
+  style SUB fill:#0c0e14,stroke:#445,color:#ccd;
+  style ASP fill:#10261b,stroke:#2a6,color:#cfe;
+  style SB fill:#26200f,stroke:#a83,color:#fec;
+  style YP fill:#1d1226,stroke:#849,color:#ecf;
 ```
+
+**Color key:** 🟩 compute (web / API / Functions) · 🟦 data (SQL / Cosmos) · 🟧 messaging (Service Bus) · 🟪 integration (Event Grid / App Insights).
 
 ## Exhibit key
 
@@ -77,20 +97,17 @@ flowchart TB
 
 ## Why two resource groups
 
-The **RG is the platform's unit of deployment and teardown.** The web/API tier and its data
-sit in `rg-pg-playground`; the integration tier (Functions) sits in `rg-pg-playground-fn`.
-That separation is required, not cosmetic: a Linux **Consumption (Y1)** Functions plan cannot
-share a resource group with a regular App Service plan
-(`LinuxDynamicWorkersNotAllowedInResourceGroup`). Its own RG gives it a clean home and true
+The resource group is the platform's unit of deployment and teardown. The web/API tier and its
+data live in `rg-pg-playground`; the integration tier (Functions) lives in
+`rg-pg-playground-fn`. That split is required, not cosmetic: a Linux **Consumption (Y1)**
+Functions plan cannot share a resource group with a regular App Service plan
+(`LinuxDynamicWorkersNotAllowedInResourceGroup`), and its own RG also gives it true
 scale-to-zero. The Functions reach Service Bus / Cosmos / SQL in the main RG over connection
 strings (same subscription). `make down` removes both.
 
 ## Notes
 
 - **Region:** Central US (East US blocks new Azure SQL; East US 2 has no App Service quota for this subscription).
-- **Auth:** the web app is locked to a single Entra account via App Service Easy Auth; the API
-  is reached server-to-server with a shared-secret header.
-- **Runtimes:** web app + API on **.NET 10**; Functions on **.NET 9 isolated** (no published
-  .NET 10 Linux Functions image yet).
-- **Cost:** ~$0 at rest except Azure SQL Basic (~$5/mo) and, while running the fan-out demo,
-  Service Bus Standard (~$0.0135/hr). The B1 plan is ~$13/mo while up.
+- **Auth:** the web app is locked to a single Entra account via App Service Easy Auth; the API is reached server-to-server with a shared-secret header.
+- **Runtimes:** web app + API on **.NET 10**; Functions on **.NET 9 isolated** (no published .NET 10 Linux Functions image yet).
+- **Cost:** ~$0 at rest except Azure SQL Basic (~$5/mo) and, while running the fan-out demo, Service Bus Standard (~$0.0135/hr). The B1 plan is ~$13/mo while up.
