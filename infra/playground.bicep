@@ -206,7 +206,7 @@ module cosmos '../../azure-platform-iac/modules/data/cosmos-db.bicep' = if (enab
 // Compute — one App Service Plan, the API limb, and the monolith body
 // ═══════════════════════════════════════════════════════════════════════════
 
-module plan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableContainerApp || enableApi) {
+module plan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableContainerApp || enableApi || enableFunctions) {
   name: '${appName}-asp'
   scope: rg
   params: {
@@ -266,19 +266,12 @@ module app '../../azure-platform-iac/modules/compute/app-service.bicep' = if (en
 // and connection settings are wired post-deploy by the Makefile (idempotent CLI).
 // ═══════════════════════════════════════════════════════════════════════════
 
-module fnPlan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableFunctions) {
-  name: '${appName}-fnplan'
-  scope: rg
-  params: {
-    name: '${appName}-fnplan'
-    location: location
-    skuName: 'Y1'           // Consumption — scale-to-zero
-    skuTier: 'Dynamic'
-    osKind: 'linux'
-    environment: 'playground'
-  }
-}
-
+// NB: the Functions app runs on the SAME plan as the web apps (B1, dedicated,
+// Always-On). Azure forbids a Linux Consumption (Y1) plan in a resource group
+// that already holds a regular App Service plan
+// ("LinuxDynamicWorkersNotAllowedInResourceGroup"), and the playground is
+// one-RG-by-design. Reusing B1 keeps it single-RG and adds $0 (B1 is already
+// paid for by Exhibits #1/#2). Not scale-to-zero, but Always-On = no cold start.
 module functions '../../azure-platform-iac/modules/compute/function-app.bicep' = if (enableFunctions) {
   name: '${appName}-fn'
   scope: rg
@@ -286,11 +279,12 @@ module functions '../../azure-platform-iac/modules/compute/function-app.bicep' =
   params: {
     name: functionsName
     location: location
-    appServicePlanId: fnPlan.outputs.id
+    appServicePlanId: plan.outputs.id
     storageAccountName: storageName
     runtimeStack: 'dotnet-isolated'
     runtimeVersion: '10.0'
-    identityBasedStorage: false   // use the storage key (simplest on Consumption)
+    alwaysOn: true
+    identityBasedStorage: false   // use the storage key (simplest)
     environment: 'playground'
     appSettings: {
       // Connection strings + AI + target injected post-deploy by the Makefile.
