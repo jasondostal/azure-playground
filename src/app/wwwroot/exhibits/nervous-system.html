@@ -88,7 +88,7 @@ publish ─▶ {topic: events} ─▶ ConsumerA (sub-a)
     }
   } else {
     document.getElementById('banner').hidden = false;
-    document.getElementById('banner').innerHTML = "Integration tier not deployed. Bring it up with <code>make all SVC=storage,kv,cosmos,sb,eg,fn,api SB_TOPICS=1</code>, then this page fills in your live URLs.";
+    document.getElementById('banner').innerHTML = "Integration tier not deployed. Bring it up with <code>make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1</code>, then this page fills in your live URLs.";
   }
   if (cfg.eventGridEndpoint) document.getElementById('egep').textContent = cfg.eventGridEndpoint;
 })();

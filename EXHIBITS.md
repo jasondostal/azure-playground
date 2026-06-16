@@ -97,7 +97,7 @@ All client-felt (same LAN-browser vantage, apples-to-apples). ~7× the API tier 
 
 **Run it:**
 ```
-make all SVC=storage,kv,cosmos,sb,eg,fn,api SB_TOPICS=1   # full demo incl. fan-out
+make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1   # full demo incl. fan-out
 make outputs                                              # Functions URL + Event Grid endpoint
 make down                                                 # reclaim everything
 ```
