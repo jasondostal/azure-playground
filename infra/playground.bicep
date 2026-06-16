@@ -89,6 +89,8 @@ var appServiceName = '${appName}-app-${suffix}'   // web app names are global DN
 var apiServiceName = '${appName}-api-${suffix}'
 var functionsName = '${appName}-fn-${suffix}'
 var storageName = replace('${appName}stg${suffix}', '-', '')
+var fnStorageName = replace('${appName}fnstg${suffix}', '-', '')
+var fnRgName = 'rg-${appName}-playground-fn'
 var eventGridName = '${appName}-egt-${suffix}'
 var sbSku = enableTopics ? 'Standard' : 'Basic'
 
@@ -206,7 +208,7 @@ module cosmos '../../azure-platform-iac/modules/data/cosmos-db.bicep' = if (enab
 // Compute — one App Service Plan, the API limb, and the monolith body
 // ═══════════════════════════════════════════════════════════════════════════
 
-module plan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableContainerApp || enableApi || enableFunctions) {
+module plan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableContainerApp || enableApi) {
   name: '${appName}-asp'
   scope: rg
   params: {
@@ -266,25 +268,56 @@ module app '../../azure-platform-iac/modules/compute/app-service.bicep' = if (en
 // and connection settings are wired post-deploy by the Makefile (idempotent CLI).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// NB: the Functions app runs on the SAME plan as the web apps (B1, dedicated,
-// Always-On). Azure forbids a Linux Consumption (Y1) plan in a resource group
-// that already holds a regular App Service plan
-// ("LinuxDynamicWorkersNotAllowedInResourceGroup"), and the playground is
-// one-RG-by-design. Reusing B1 keeps it single-RG and adds $0 (B1 is already
-// paid for by Exhibits #1/#2). Not scale-to-zero, but Always-On = no cold start.
+// The Functions app lives in its OWN resource group on a Linux Consumption (Y1)
+// plan — true scale-to-zero. A Linux Y1 plan can't share a resource group with a
+// regular App Service plan ("LinuxDynamicWorkersNotAllowedInResourceGroup"), and
+// the dedicated-plan dotnet-isolated runtime images aren't published. Its own RG
+// dodges both. The function reaches Service Bus / Cosmos / Storage in the main RG
+// over connection strings (same subscription). `make down` deletes both RGs.
+// (.NET 9 isolated — no .NET 10 Linux Functions image exists yet.)
+resource rgFn 'Microsoft.Resources/resourceGroups@2024-03-01' = if (enableFunctions) {
+  name: fnRgName
+  location: location
+  tags: { purpose: 'playground-functions', managedBy: 'azure-playground', costProfile: 'cheap' }
+}
+
+module fnStorage '../../azure-platform-iac/modules/data/storage.bicep' = if (enableFunctions) {
+  name: '${appName}-fnstg'
+  scope: rgFn
+  params: {
+    name: fnStorageName
+    location: location
+    sku: 'Standard_LRS'
+    disablePublicAccess: false
+    environment: 'playground'
+  }
+}
+
+module fnPlan '../../azure-platform-iac/modules/compute/app-service-plan.bicep' = if (enableFunctions) {
+  name: '${appName}-fnplan'
+  scope: rgFn
+  params: {
+    name: '${appName}-fnplan'
+    location: location
+    skuName: 'Y1'           // Consumption — scale-to-zero
+    skuTier: 'Dynamic'
+    osKind: 'linux'
+    environment: 'playground'
+  }
+}
+
 module functions '../../azure-platform-iac/modules/compute/function-app.bicep' = if (enableFunctions) {
   name: '${appName}-fn'
-  scope: rg
-  dependsOn: [storage]
+  scope: rgFn
+  dependsOn: [fnStorage]
   params: {
     name: functionsName
     location: location
-    appServicePlanId: plan.outputs.id
-    storageAccountName: storageName
+    appServicePlanId: fnPlan.outputs.id
+    storageAccountName: fnStorageName
     runtimeStack: 'dotnet-isolated'
     runtimeVersion: '9'    // .NET 10 isolated Functions image isn't published on Linux yet; 9 is GA
-    alwaysOn: true
-    identityBasedStorage: false   // use the storage key (simplest)
+    identityBasedStorage: false   // use the function storage key (simplest)
     environment: 'playground'
     appSettings: {
       // Connection strings + AI + target injected post-deploy by the Makefile.
@@ -319,6 +352,7 @@ output keyVaultUri string = enableKeyVault ? keyVault.outputs.uri : ''
 output serviceBusEndpoint string = enableServiceBus ? serviceBus.outputs.endpoint : ''
 output serviceBusNamespace string = enableServiceBus ? sbNamespaceName : ''
 output functionsName string = enableFunctions ? functionsName : ''
+output functionsResourceGroup string = enableFunctions ? fnRgName : ''
 output functionsUrl string = enableFunctions ? 'https://${functions.outputs.defaultHostName}' : ''
 output eventGridName string = enableEventGrid ? eventGridName : ''
 output eventGridEndpoint string = enableEventGrid ? eventGrid.outputs.endpoint : ''

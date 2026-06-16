@@ -10,6 +10,7 @@ out() { az deployment sub show -n "$DEPLOY" --query "properties.outputs.$1.value
 
 FN=$(out functionsName)
 [ -z "$FN" ] && { echo ">> functions not enabled; skipping integration wiring"; exit 0; }
+FN_RG=$(out functionsResourceGroup); FN_RG=${FN_RG:-$RG}   # Functions live in their own RG
 FNURL=$(out functionsUrl); SBNS=$(out serviceBusNamespace); COSMOS=$(out cosmosAccountName); EGT=$(out eventGridName)
 LOC=$(az group show -n "$RG" --query location -o tsv)
 echo ">> wiring integration tier: $FN"
@@ -57,15 +58,15 @@ if [ "$SKU" = "Standard" ]; then
 else
   SETTINGS+=("AzureWebJobs.ConsumerA.Disabled=true" "AzureWebJobs.ConsumerB.Disabled=true")
 fi
-az functionapp config appsettings set -g "$RG" -n "$FN" --settings "${SETTINGS[@]}" -o none && echo "   app settings set"
+az functionapp config appsettings set -g "$FN_RG" -n "$FN" --settings "${SETTINGS[@]}" -o none && echo "   app settings set"
 
 # 5. Deploy the Functions code
-az functionapp deployment source config-zip -g "$RG" -n "$FN" --src dist/functions.zip -o none && echo "   code deployed"
+az functionapp deployment source config-zip -g "$FN_RG" -n "$FN" --src dist/functions.zip -o none && echo "   code deployed"
 
 # 6. Event Grid custom topic → EventGridIngress function
 if [ -n "$EGT" ]; then
   TOPIC_ID=$(az eventgrid topic show -g "$RG" -n "$EGT" --query id -o tsv)
-  FN_ID=$(az functionapp show -g "$RG" -n "$FN" --query id -o tsv)
+  FN_ID=$(az functionapp show -g "$FN_RG" -n "$FN" --query id -o tsv)
   az eventgrid event-subscription create --name fn-ingress \
     --source-resource-id "$TOPIC_ID" \
     --endpoint-type azurefunction \

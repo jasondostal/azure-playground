@@ -2,21 +2,18 @@
 
 Newest first.
 
-- [ ] **Exhibit #3 (Nervous System) — Functions host won't start on Linux.** All code/infra
-      is built, committed, and deployed EXCEPT the Functions compute. Root cause: Azure has no
-      published Linux runtime image for `dotnet-isolated` on a **dedicated** plan
-      (`ImageNotFoundFailure` pulling `…dotnet-isolated{9,10}-appservice-stage3`), and a Linux
-      **Consumption (Y1)** plan can't live in an RG that already has the B1 plan
-      (`LinuxDynamicWorkersNotAllowedInResourceGroup`). The five scenarios, bicep bolts,
-      Makefile wiring, page, and docs are all done. Resume options:
-        1. Functions on **Linux Consumption (Y1) in a SEPARATE RG** (`rg-pg-playground-fn`);
-           `make down` deletes both. The supported, reliable path for Linux .NET-isolated.
-        2. **Windows** Consumption/dedicated Functions (no Linux container image; needs a
-           Windows plan + the function-app module taught Windows, different RG-mix rules).
-        3. Wait for the `dotnet-isolated` Linux **dedicated** images to publish, then it works
-           as-is on the shared B1.
-      Note: Easy Auth on the web app is applied via CLI (not IaC), so a `make down` + redeploy
-      needs the auth re-applied (see below).
+- [ ] **Exhibit #3 (Nervous System) — first live deploy of the Functions tier.** Now wired to
+      run on a **Linux Consumption (Y1) plan in its own resource group** (`rg-pg-playground-fn`,
+      created by the same sub-scoped bicep; `make down` deletes both RGs). This dodges both
+      earlier blockers: the Y1-can't-share-an-RG rule, and the missing dedicated-plan
+      `dotnet-isolated` runtime images. Functions app is **.NET 9 isolated** (no .NET 10 Linux
+      Functions image exists yet); web/API stay .NET 10. All code/infra/wiring committed.
+      Bring it up next session and verify the five scenarios:
+        `make all SVC=sql,cosmos,api,sb,storage,kv,eg,fn SB_TOPICS=1 WARM=1 SQL_PASSWORD=… API_SECRET=… EASYAUTH_SECRET=…`
+      Unverified risk: the app-service-plan module sets `kind: 'linux'` for the Y1 plan; a Linux
+      Consumption plan may want `kind: 'functionapp'`. If the plan/app misbehaves on first
+      deploy, adjust there. Easy Auth on the web app is CLI-applied (re-applied by `make deploy`
+      via EASYAUTH_SECRET after every `make up`).
 
 - [ ] **Left nav / sidebar** in the app shell so exhibits are findable as they pile up
       (the home page card-grid works for a handful; a persistent left nav scales better).

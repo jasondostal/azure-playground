@@ -124,8 +124,9 @@ status: ## List everything in the playground RG
 outputs: ## Show deployment outputs (app URL etc.)
 	az deployment sub show -n $(DEPLOY) --query properties.outputs 2>/dev/null || echo "(not deployed)"
 
-down: ## Delete the entire playground RG (everything, no undo)
+down: ## Delete the playground resource group(s) — everything, no undo
 	az group delete --name $(RG) --yes --no-wait && echo ">> teardown started for $(RG)"
+	-az group delete --name $(RG)-fn --yes --no-wait 2>/dev/null && echo ">> teardown started for $(RG)-fn"
 
 help: ## This help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /  —  /'
