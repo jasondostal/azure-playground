@@ -1,3 +1,4 @@
+using Microsoft.Azure.Cosmos;
 using Microsoft.Data.SqlClient;
 
 namespace Playground.App;
@@ -48,4 +49,21 @@ IF NOT EXISTS (SELECT * FROM Members WHERE Id = @id)
         cmd.Parameters.AddWithValue("@id", id);
         return await cmd.ExecuteScalarAsync() as string;
     }
+
+    // Direct (in-process) Cosmos read — same backend the API limb reads, but no
+    // hop. The API limb owns seeding; the body only reads.
+    public static async Task<string?> ReadSsnCosmos(Container container, string id)
+    {
+        try
+        {
+            var resp = await container.ReadItemAsync<MemberDoc>(id, new PartitionKey(id));
+            return resp.Resource.ssn;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public record MemberDoc(string id, string name, string ssn);
 }

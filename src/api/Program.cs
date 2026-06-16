@@ -9,8 +9,24 @@ var app = builder.Build();
 var sqlConn = Environment.GetEnvironmentVariable("SQL_CONNECTION") ?? "";
 var cosmosEndpoint = Environment.GetEnvironmentVariable("COSMOS_ENDPOINT") ?? "";
 var cosmosKey = Environment.GetEnvironmentVariable("COSMOS_KEY") ?? "";
+var apiSecret = Environment.GetEnvironmentVariable("API_SHARED_SECRET") ?? "";
 const string CosmosDb = "playground";
 const string CosmosContainer = "members";
+
+// Shared-secret gate: only the body (which sends X-Playground-Key) can call the
+// limb. /healthz stays open for the platform's warmup probe. No secret set = open
+// (e.g. local dev).
+app.Use(async (ctx, next) =>
+{
+    if (!string.IsNullOrEmpty(apiSecret) && ctx.Request.Path != "/healthz" &&
+        !string.Equals(ctx.Request.Headers["X-Playground-Key"], apiSecret, StringComparison.Ordinal))
+    {
+        ctx.Response.StatusCode = 401;
+        await ctx.Response.WriteAsync("unauthorized");
+        return;
+    }
+    await next();
+});
 
 // Cosmos via account key (App Service Free has no managed identity). Gateway
 // mode = HTTPS/443 only, which the App Service sandbox allows (Direct needs a

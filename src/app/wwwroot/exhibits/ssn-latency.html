@@ -16,6 +16,7 @@
     --warn: oklch(0.8 0.15 75);
     --gold: oklch(0.85 0.16 95);
     --direct: oklch(0.72 0.16 230);
+    --directcosmos: oklch(0.78 0.14 195);
     --apisql: oklch(0.78 0.17 150);
     --apicosmos: oklch(0.72 0.18 300);
   }
@@ -45,8 +46,9 @@
   button:disabled { opacity: .5; cursor: default; }
 
   /* The flip cards */
-  .arena { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-  @media (max-width: 720px) { .arena { grid-template-columns: 1fr; } }
+  .arena { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  @media (max-width: 860px) { .arena { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 460px) { .arena { grid-template-columns: 1fr; } }
   .card { perspective: 1000px; aspect-ratio: 3/4; }
   .inner { position: relative; width: 100%; height: 100%; transition: transform .6s cubic-bezier(.2,.8,.3,1.2); transform-style: preserve-3d; }
   .card.flip .inner { transform: rotateY(180deg); }
@@ -121,17 +123,39 @@
     </div>
     <div id="benchOut"></div>
   </div>
+
+  <!-- ── Archived research findings (static reference for show-and-tell) ── -->
+  <div class="panel" style="margin-top:1.4rem">
+    <strong>Reference results — research archive</strong>
+    <p class="sub" style="margin:.4rem 0 0">Measured 2026-06-16, Central US, B1 (Always-On), 200 samples/path, warm pools. Single synthetic record by primary key. <em>Server-side</em> = timed in the app (no network). <em>Client-felt</em> = headless Chromium over a LAN to Central US.</p>
+    <table>
+      <thead><tr><th>architecture</th><th>server p50</th><th>server p95</th><th>client p50</th><th>client p95</th></tr></thead>
+      <tbody>
+        <tr><td><span class="swatch" style="background:var(--direct)"></span> Direct → Azure SQL</td><td><strong>1.1 ms</strong></td><td>8 ms</td><td>45 ms</td><td>85 ms</td></tr>
+        <tr><td><span class="swatch" style="background:var(--directcosmos)"></span> Direct → Cosmos</td><td><strong>24 ms</strong></td><td>37 ms</td><td>67 ms</td><td>88 ms</td></tr>
+        <tr><td><span class="swatch" style="background:var(--apisql)"></span> API → Azure SQL</td><td><strong>21 ms</strong></td><td>50 ms</td><td>63 ms</td><td>107 ms</td></tr>
+        <tr><td><span class="swatch" style="background:var(--apicosmos)"></span> API → Cosmos</td><td><strong>40 ms</strong></td><td>70 ms</td><td>83 ms</td><td>122 ms</td></tr>
+      </tbody>
+    </table>
+    <div class="verdict" style="margin-top:1rem">
+      Server-side, the <strong>API tier costs ~16–19 ms</strong> (1→21 ms on SQL, 24→40 ms on Cosmos) — consistent across backends, so it's a real measurement, not noise. Add a real browser over the network and a flat <strong>~45 ms floor</strong> appears (your distance to the datacenter), yet the worst path's client p95 is still <strong>~122 ms</strong>. Either lens: a fraction of a second. <strong>Nothing approaches "seconds."</strong>
+    </div>
+    <div class="caveat" style="margin-top:.8rem">
+      <strong>Method notes:</strong> The datastore engine matters more than the hop — Cosmos point-reads run ~22 ms above SQL. The only time this ever showed hundreds-of-ms-to-seconds was on the <strong>Free (F1) tier under sustained load</strong> (CPU throttling) — a tier choice, not the API. On B1 that tail disappears.
+    </div>
+  </div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
 const fmt = ms => (ms == null ? "—" : ms.toFixed(1) + " ms");
 const PATHS = [
-  { key: "direct",    name: "Direct → Azure SQL", color: "var(--direct)",    ep: "/api/ssn/direct/" },
-  { key: "apiSql",    name: "API → Azure SQL",    color: "var(--apisql)",    ep: "/api/ssn/via-api-sql/" },
-  { key: "apiCosmos", name: "API → Cosmos",       color: "var(--apicosmos)", ep: "/api/ssn/via-api-cosmos/" },
+  { key: "direct",       name: "Direct → Azure SQL", color: "var(--direct)",       ep: "/api/ssn/direct/" },
+  { key: "directCosmos", name: "Direct → Cosmos",    color: "var(--directcosmos)", ep: "/api/ssn/direct-cosmos/" },
+  { key: "apiSql",       name: "API → Azure SQL",    color: "var(--apisql)",       ep: "/api/ssn/via-api-sql/" },
+  { key: "apiCosmos",    name: "API → Cosmos",       color: "var(--apicosmos)",    ep: "/api/ssn/via-api-cosmos/" },
 ];
-let cfg = { sql: false, api: false, memberId: "1", memberName: "Member" };
+let cfg = { sql: false, cosmos: false, api: false, memberId: "1", memberName: "Member" };
 
 function buildCards() {
   const arena = $("#arena");
@@ -257,13 +281,13 @@ $("#bench").onclick = async () => {
 function renderBench(data) {
   const rows = PATHS.map(p => ({ ...p, s: data[p.key] })).filter(r => r.s);
   if (!rows.length) { $("#benchOut").innerHTML = `<p style="color:var(--warn)">nothing measured.</p>`; return; }
-  const maxAvg = Math.max(...rows.map(r => r.s.avg));
+  const maxP50 = Math.max(...rows.map(r => r.s.p50));  // bars track the median (robust to outliers)
   let html = `<table><thead><tr><th>path</th><th>min</th><th>p50</th><th>avg</th><th>p95</th><th>max</th></tr></thead><tbody>`;
   for (const r of rows) {
     html += `<tr>
       <td><span class="swatch" style="background:${r.color}"></span> ${r.name}</td>
-      <td>${fmt(r.s.min)}</td><td>${fmt(r.s.p50)}</td><td>${fmt(r.s.avg)}</td><td>${fmt(r.s.p95)}</td><td>${fmt(r.s.max)}</td></tr>
-      <tr><td colspan="6" style="padding-top:0;border:0"><div class="bar" style="width:${Math.max(3, 100*r.s.avg/maxAvg)}%;background:${r.color}"></div></td></tr>`;
+      <td>${fmt(r.s.min)}</td><td><strong>${fmt(r.s.p50)}</strong></td><td>${fmt(r.s.avg)}</td><td>${fmt(r.s.p95)}</td><td>${fmt(r.s.max)}</td></tr>
+      <tr><td colspan="6" style="padding-top:0;border:0"><div class="bar" style="width:${Math.max(3, 100*r.s.p50/maxP50)}%;background:${r.color}"></div></td></tr>`;
   }
   $("#benchOut").innerHTML = html + `</tbody></table>`;
 }

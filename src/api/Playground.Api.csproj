@@ -6,7 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Playground.Api</RootNamespace>
     <AssemblyName>Playground.Api</AssemblyName>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- NB: do NOT set InvariantGlobalization — Microsoft.Data.SqlClient
+         throws "Globalization Invariant Mode is not supported" on init. -->
   </PropertyGroup>
 
   <ItemGroup>

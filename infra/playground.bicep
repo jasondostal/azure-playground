@@ -66,6 +66,10 @@ param sqlAdminLogin string = 'pgadmin'
 @secure()
 param sqlAdminPassword string = ''
 
+@description('Shared secret the body sends to the API limb (X-Playground-Key). Pass via Makefile.')
+@secure()
+param apiSharedSecret string = ''
+
 // ── Deterministic resource names ────────────────────────────────────────────
 var rgId = subscriptionResourceId('Microsoft.Resources/resourceGroups', 'rg-${appName}-playground')
 var suffix = uniqueString(rgId)
@@ -214,6 +218,7 @@ module api '../../azure-platform-iac/modules/compute/app-service.bicep' = if (en
     appSettings: {
       SQL_CONNECTION: enableSql ? sqlConn : ''
       COSMOS_ENDPOINT: enableCosmos ? cosmosEndpoint : ''
+      API_SHARED_SECRET: apiSharedSecret
       // COSMOS_KEY injected post-deploy by the Makefile (az cosmosdb keys list)
     }
   }
@@ -233,6 +238,9 @@ module app '../../azure-platform-iac/modules/compute/app-service.bicep' = if (en
     appSettings: {
       SQL_CONNECTION: enableSql ? sqlConn : ''
       API_BASE: enableApi ? 'https://${api.outputs.defaultHostName}' : ''
+      COSMOS_ENDPOINT: enableCosmos ? cosmosEndpoint : ''
+      API_SHARED_SECRET: apiSharedSecret
+      // COSMOS_KEY injected post-deploy by the Makefile (az cosmosdb keys list)
     }
   }
 }

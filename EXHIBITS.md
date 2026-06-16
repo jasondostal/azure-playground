@@ -28,4 +28,17 @@ make all SVC=sql,cosmos,api WARM=1 SQL_PASSWORD='S0me-Str0ng-Pass!'
 
 **Data:** one synthetic member (`640-01-2345`) — not real PII.
 
-**Status:** built. Awaiting first live run for the numbers.
+**Results (2026-06-16, Central US, B1, 200 samples/path):**
+
+![SSN reveal latency results](docs/ssn-latency-results.png)
+
+| architecture | server p50 | server p95 | client p50 | client p95 |
+|---|---|---|---|---|
+| Direct → Azure SQL | 1.1 ms | 8 ms | 45 ms | 85 ms |
+| Direct → Cosmos | 24 ms | 37 ms | 67 ms | 88 ms |
+| API → Azure SQL | 21 ms | 50 ms | 63 ms | 107 ms |
+| API → Cosmos | 40 ms | 70 ms | 83 ms | 122 ms |
+
+Server-side the API tier costs ~16–19 ms; client-felt (real Chromium over a LAN) adds a ~45 ms network floor, worst-path p95 still ~122 ms. Nothing approaches "seconds." Graphic generator: [`docs/ssn-latency-chart.html`](docs/ssn-latency-chart.html).
+
+**Status:** live and measured. Locked behind Entra Easy Auth (owner-only).
