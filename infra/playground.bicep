@@ -155,14 +155,16 @@ module keyVault '../../azure-platform-iac/modules/security/key-vault.bicep' = if
   }
 }
 
+var sbNamespaceName = '${appName}-sb-${suffix}'
 module serviceBus '../../azure-platform-iac/modules/messaging/service-bus.bicep' = if (enableServiceBus) {
   name: '${appName}-sb'
   scope: rg
   params: {
-    name: '${appName}-sb-${suffix}'
+    name: sbNamespaceName
     location: location
     sku: 'Basic'
     disablePublicAccess: false
+    disableLocalAuth: false   // demo: use the SAS connection string
     environment: 'playground'
   }
 }
@@ -258,3 +260,4 @@ output cosmosAccountName string = enableCosmos ? cosmosName : ''
 output storageName string = enableStorage ? storage.outputs.name : ''
 output keyVaultUri string = enableKeyVault ? keyVault.outputs.uri : ''
 output serviceBusEndpoint string = enableServiceBus ? serviceBus.outputs.endpoint : ''
+output serviceBusNamespace string = enableServiceBus ? sbNamespaceName : ''

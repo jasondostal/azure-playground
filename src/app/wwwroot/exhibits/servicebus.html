@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exhibit #2 — Service Bus for synchronous reads (don't)</title>
+<style>
+  :root{
+    --bg:oklch(0.17 0.02 265);--panel:oklch(0.22 0.03 265);--panel2:oklch(0.25 0.03 265);
+    --line:oklch(0.32 0.03 265);--text:oklch(0.93 0.01 265);--muted:oklch(0.68 0.02 265);
+    --accent:oklch(0.78 0.17 150);--warn:oklch(0.8 0.15 75);--bad:oklch(0.65 0.2 25);
+    --api:oklch(0.78 0.17 150);--sb:oklch(0.65 0.2 25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:1.5rem}
+  a.back{color:var(--muted);text-decoration:none;font-size:.9rem}a.back:hover{color:var(--accent)}
+  h1{font-size:1.5rem;margin:.6rem 0 .2rem}
+  .sub{color:var(--muted);margin:0 0 1.4rem}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
+  .banner{background:oklch(0.28 0.06 75);border:1px solid var(--warn);border-radius:10px;padding:.7rem 1rem;margin-bottom:1.2rem;font-size:.92rem}
+  code{background:var(--panel2);padding:.05rem .35rem;border-radius:4px;font-size:.85em}
+  button{cursor:pointer;font:inherit;font-weight:700;color:var(--bg);background:var(--accent);border:0;border-radius:9px;padding:.6rem 1.1rem}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
+  label.k{color:var(--muted);font-size:.9rem}
+  select{font:inherit;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:.4rem .5rem}
+  .verdict{margin-top:1rem;display:grid;gap:.6rem}
+  .cmp{display:grid;grid-template-columns:140px 1fr auto;gap:.7rem;align-items:center}
+  .cmp .name{font-size:.9rem;color:var(--muted);display:flex;align-items:center;gap:.4rem}
+  .sw{width:.7rem;height:.7rem;border-radius:3px;display:inline-block}
+  .meter{height:22px;border-radius:6px;background:var(--panel2);overflow:hidden}
+  .fill{height:100%;border-radius:6px}
+  .ms{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+  .ratio{font-size:1.15rem;margin-top:.8rem;padding:.9rem 1rem;border-radius:10px;background:oklch(0.27 0.07 25);border:1px solid var(--bad)}
+  .caveat{color:var(--muted);font-size:.86rem;margin-top:.8rem;border-left:2px solid var(--warn);padding-left:.8rem}
+  .mech{font-size:.92rem;color:var(--muted)}
+  .mech b{color:var(--text)}
+  pre.flow{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;font-size:.82rem;overflow:auto;color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← back to the lab</a>
+  <h1>Exhibit #2 — Service Bus for synchronous reads <span style="color:var(--bad)">(a cautionary tale)</span></h1>
+  <p class="sub">Exhibit #1 showed an API tier is cheap. This shows the thing that <em>actually</em> earns the "it'll take seconds" reputation: using a message queue for a synchronous read.</p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="panel">
+    <div class="mech">A queue is <b>async decoupling</b> infrastructure. To fake a synchronous reveal through it, you do this:</div>
+    <pre class="flow">UI → enqueue request → [broker] → worker receives → reads SQL
+   → worker enqueues reply → [broker] → UI receives reply</pre>
+    <div class="mech">One in-process call becomes <b>~4–6 broker round-trips</b>. Add a naive client poll loop and it compounds. Watch.</div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <strong>Reveal one SSN — Service Bus vs the API tier</strong>
+      <div class="row">
+        <label class="k" for="poll">client poll</label>
+        <select id="poll">
+          <option value="0">long-poll (best case)</option>
+          <option value="250">poll every 250ms</option>
+          <option value="1000">poll every 1s (naive)</option>
+        </select>
+        <button id="go">Reveal</button>
+      </div>
+    </div>
+    <div id="out" class="verdict"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <strong>Run it 10× (medians)</strong>
+      <button id="bench" class="ghost">Run 10×</button>
+    </div>
+    <div id="benchOut"></div>
+  </div>
+
+  <div class="panel">
+    <strong>Reference results</strong>
+    <p class="sub" style="margin:.4rem 0 .6rem">Measured 2026-06-16, Central US, Basic tier. Same SSN read as Exhibit #1, routed through Service Bus request/reply.</p>
+    <table style="width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums">
+      <thead><tr><th style="text-align:left;color:var(--muted);font-size:.82rem;padding:.4rem 0">path / mode</th><th style="text-align:right;color:var(--muted);font-size:.82rem">p50</th><th style="text-align:right;color:var(--muted);font-size:.82rem">vs API</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--api)"></span> API → SQL (Exhibit #1)</td><td style="text-align:right;font-weight:700">~20 ms</td><td style="text-align:right;color:var(--muted)">1×</td></tr>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · long-poll</td><td style="text-align:right;font-weight:700">~450 ms</td><td style="text-align:right;color:var(--bad)">~22×</td></tr>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · poll 1s</td><td style="text-align:right;font-weight:700">~1,150 ms</td><td style="text-align:right;color:var(--bad)">~57×</td></tr>
+      </tbody>
+    </table>
+    <div class="ratio" style="margin-top:.9rem">Best case is ~10–25× the API tier; naive polling crosses <strong>one full second</strong>. And request/reply over a queue with no sessions occasionally <strong>loses replies entirely</strong> — slow <em>and</em> unreliable.</div>
+  </div>
+
+  <div class="caveat"><strong>Why it's the wrong tool:</strong> queues exist to <em>decouple</em> producers from consumers for work that can happen <em>later</em> — not to answer a user staring at a screen <em>now</em>. Basic tier can't even do <code>sessions</code> (the proper way to correlate a reply to its request), so you hand-roll it. The latency you see isn't Service Bus being slow — it's the wrong shape for the job. <a class="back" href="/exhibits/ssn-latency.html" style="color:var(--accent)">← compare to Exhibit #1</a></div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const fmt=ms=>ms==null?"—":ms.toFixed(0)+" ms";
+let cfg={serviceBus:false,api:false,memberId:"1"};
+
+async function init(){
+  try{cfg=await(await fetch("/api/config")).json();}catch{}
+  if(!cfg.serviceBus||!cfg.api){
+    const b=$("#banner");b.hidden=false;
+    b.innerHTML="Needs <code>enableServiceBus</code> + <code>enableApi</code>. Deploy with <code>make all SVC=sql,cosmos,api,sb WARM=1</code>.";
+  }
+}
+
+async function once(ep){const t=performance.now();let r={};try{r=await(await fetch(ep)).json();}catch(e){}return{ms:performance.now()-t,r};}
+
+$("#go").onclick=async()=>{
+  $("#go").disabled=true;
+  const poll=$("#poll").value;
+  const out=$("#out");out.innerHTML='<span style="color:var(--muted)">routing through the broker…</span>';
+  const sb=await once(`/api/ssn/via-servicebus/${cfg.memberId}?poll=${poll}`);
+  const api=await once(`/api/ssn/via-api-sql/${cfg.memberId}`);
+  const sbMs=sb.r.serverMs??sb.ms, apiMs=api.r.serverMs??api.ms;
+  const max=Math.max(sbMs,apiMs,1);
+  const ratio=apiMs>0?(sbMs/apiMs):0;
+  out.innerHTML=`
+    <div class="cmp"><span class="name"><span class="sw" style="background:var(--api)"></span>API → SQL</span>
+      <div class="meter"><div class="fill" style="width:${100*apiMs/max}%;background:var(--api)"></div></div><span class="ms">${fmt(apiMs)}</span></div>
+    <div class="cmp"><span class="name"><span class="sw" style="background:var(--sb)"></span>Service Bus</span>
+      <div class="meter"><div class="fill" style="width:${100*sbMs/max}%;background:var(--sb)"></div></div><span class="ms">${fmt(sbMs)}</span></div>
+    <div class="ratio">Same answer (<code>${sb.r.ssn||api.r.ssn||"—"}</code>), but Service Bus took <strong>${ratio.toFixed(0)}× longer</strong> — ${fmt(sbMs)} vs ${fmt(apiMs)}. ${sbMs>900?'That\\'s the "seconds" the skeptics feared — delivered by the <em>wrong tool</em>, not the API.':'Still a tax you pay for nothing on a synchronous read.'}</div>`;
+  $("#go").disabled=false;
+};
+
+$("#bench").onclick=async()=>{
+  $("#bench").disabled=true;
+  const poll=$("#poll").value;
+  const out=$("#benchOut");out.innerHTML='<p style="color:var(--muted)">10 runs each…</p>';
+  const med=a=>{a.sort((x,y)=>x-y);return a[Math.floor(a.length/2)];};
+  const sb=[],api=[];
+  for(let i=0;i<10;i++){const s=await once(`/api/ssn/via-servicebus/${cfg.memberId}?poll=${poll}`);sb.push(s.r.serverMs??s.ms);const a=await once(`/api/ssn/via-api-sql/${cfg.memberId}`);api.push(a.r.serverMs??a.ms);}
+  const sbM=med(sb),apiM=med(api);
+  out.innerHTML=`<table style="width:100%;border-collapse:collapse;margin-top:.6rem;font-variant-numeric:tabular-nums">
+    <tr><td style="padding:.4rem 0"><span class="sw" style="background:var(--api)"></span> API → SQL median</td><td style="text-align:right;font-weight:700">${fmt(apiM)}</td></tr>
+    <tr><td style="padding:.4rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus median</td><td style="text-align:right;font-weight:700">${fmt(sbM)}</td></tr></table>
+    <div class="ratio">Median Service Bus reveal is <strong>${(sbM/apiM).toFixed(0)}× slower</strong> than the API tier. For a read a user is waiting on, that's all downside.</div>`;
+  $("#bench").disabled=false;
+};
+init();
+</script>
+</body>
+</html>

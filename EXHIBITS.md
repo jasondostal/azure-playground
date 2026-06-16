@@ -42,3 +42,31 @@ make all SVC=sql,cosmos,api WARM=1 SQL_PASSWORD='S0me-Str0ng-Pass!'
 Server-side the API tier costs ~16–19 ms; client-felt (real Chromium over a LAN) adds a ~45 ms network floor, worst-path p95 still ~122 ms. Nothing approaches "seconds." Graphic generator: [`docs/ssn-latency-chart.html`](docs/ssn-latency-chart.html).
 
 **Status:** live and measured. Locked behind Entra Easy Auth (owner-only).
+
+---
+
+## #2 — Service Bus for synchronous reads (a cautionary tale)
+
+**The point:** the inverse of Exhibit #1. It shows what *actually* earns the "it'll take seconds" reputation — using a message queue for a synchronous read. One in-process call becomes a request/reply round-trip through a broker (~4–6 broker hops), and a naive client poll loop compounds it.
+
+**How it works:** the body sends a request to `reveal-requests`; a background worker in the API limb consumes it, reads SQL, and pushes the answer to `reveal-replies`; the body waits for the reply and times the whole thing. A `?poll=` knob shows how a hand-rolled receive loop makes it worse.
+
+**Bolts:** `sql`, `api`, `sb` (Service Bus Basic).
+
+**Run it:**
+```bash
+make all SVC=sql,cosmos,api,sb WARM=1 SQL_PASSWORD='...' API_SECRET='...'
+# open /exhibits/servicebus.html → Reveal, try the poll modes, Run 10×
+```
+
+**Results (2026-06-16, Central US, Basic):**
+
+| path / mode | p50 | vs API tier |
+|---|---|---|
+| API → SQL (Exhibit #1) | ~20 ms | 1× |
+| Service Bus · long-poll | ~450 ms | ~22× |
+| Service Bus · poll 1s (naive) | ~1,150 ms | ~57× |
+
+Best case is ~10–25× the API tier; naive polling crosses **a full second** — the literal "seconds," delivered by the wrong tool. Basic tier has no sessions to correlate replies cleanly, so request/reply over the queue also **occasionally loses replies** — slow *and* unreliable. Queues are for async decoupling, not answering a user who's waiting.
+
+**Status:** live and measured.

@@ -23,6 +23,7 @@ PARAMS       := infra/params/playground.bicepparam
 SVC          ?=
 SQL_PASSWORD ?=
 API_SECRET   ?=
+EASYAUTH_SECRET ?=
 WARM         ?=
 DOTNET       := $(shell command -v dotnet 2>/dev/null || echo $(HOME)/.dotnet/dotnet)
 
@@ -76,24 +77,29 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	APP=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.appServiceName.value -o tsv); \
 	API=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.apiServiceName.value -o tsv); \
 	COSMOS=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.cosmosAccountName.value -o tsv); \
-	KEY=""; \
+	SBNS=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.serviceBusNamespace.value -o tsv); \
+	KEY=""; SBCONN=""; \
 	if [ -n "$$COSMOS" ]; then KEY=$$(az cosmosdb keys list -g $(RG) -n "$$COSMOS" --query primaryMasterKey -o tsv); fi; \
+	if [ -n "$$SBNS" ]; then SBCONN=$$(az servicebus namespace authorization-rule keys list -g $(RG) --namespace-name "$$SBNS" --name RootManageSharedAccessKey --query primaryConnectionString -o tsv); fi; \
 	if [ -n "$$API" ]; then \
 	  echo ">> deploying API → $$API"; \
 	  az webapp deploy -g $(RG) -n "$$API" --src-path dist/api.zip --type zip; \
-	  if [ -n "$$KEY" ]; then echo ">> Cosmos key → $$API"; az webapp config appsettings set -g $(RG) -n "$$API" --settings COSMOS_KEY="$$KEY" -o none; fi; \
+	  [ -n "$$KEY" ] && { echo ">> Cosmos key → $$API"; az webapp config appsettings set -g $(RG) -n "$$API" --settings COSMOS_KEY="$$KEY" -o none; }; \
+	  [ -n "$$SBCONN" ] && { echo ">> SB conn → $$API"; az webapp config appsettings set -g $(RG) -n "$$API" --settings SERVICEBUS_CONNECTION="$$SBCONN" -o none; }; \
 	fi; \
 	if [ -n "$$APP" ]; then \
 	  echo ">> deploying app → $$APP"; \
 	  az webapp deploy -g $(RG) -n "$$APP" --src-path dist/app.zip --type zip; \
-	  if [ -n "$$KEY" ]; then echo ">> Cosmos key → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings COSMOS_KEY="$$KEY" -o none; fi; \
+	  [ -n "$$KEY" ] && { echo ">> Cosmos key → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings COSMOS_KEY="$$KEY" -o none; }; \
+	  [ -n "$$SBCONN" ] && { echo ">> SB conn → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings SERVICEBUS_CONNECTION="$$SBCONN" -o none; }; \
+	  [ -n "$(EASYAUTH_SECRET)" ] && { echo ">> Easy Auth secret → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings MICROSOFT_PROVIDER_AUTHENTICATION_SECRET="$(EASYAUTH_SECRET)" -o none; }; \
 	fi; \
 	echo ">> live at: $$(az deployment sub show -n $(DEPLOY) --query properties.outputs.appUrl.value -o tsv)"
 
 all: ## up + publish + deploy in one shot
 	$(MAKE) up SVC="$(SVC)" WARM="$(WARM)" SQL_PASSWORD="$(SQL_PASSWORD)" API_SECRET="$(API_SECRET)"
 	$(MAKE) publish
-	$(MAKE) deploy
+	$(MAKE) deploy EASYAUTH_SECRET="$(EASYAUTH_SECRET)"
 
 whatif: ## Preview the infra diff
 	@$(svc_to_params); \

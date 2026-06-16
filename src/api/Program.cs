@@ -3,6 +3,7 @@ using Microsoft.Azure.Cosmos;
 using Playground.Api;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddHostedService<SbWorker>(); // Exhibit #2: queue consumer (idle if SB unset)
 var app = builder.Build();
 
 // ── Config (env-driven; empty = that backend is "not bolted on yet") ──────

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Playground.App;
 
@@ -34,6 +35,13 @@ if (!string.IsNullOrWhiteSpace(cosmosEndpoint) && !string.IsNullOrWhiteSpace(cos
     cosmosDirect = cc.GetContainer("playground", "members");
 }
 
+// Exhibit #2: Service Bus client for the (ill-advised) sync request/reply path.
+var sbConn = Environment.GetEnvironmentVariable("SERVICEBUS_CONNECTION") ?? "";
+ServiceBusClient? sbClient = !string.IsNullOrWhiteSpace(sbConn)
+    ? new ServiceBusClient(sbConn, new ServiceBusClientOptions { TransportType = ServiceBusTransportType.AmqpWebSockets })
+    : null;
+ServiceBusSender? sbRequests = sbClient?.CreateSender("reveal-requests");
+
 await Db.EnsureSqlSeed(sqlConn, app.Logger);
 
 app.MapGet("/healthz", () => Results.Text("ok"));
@@ -44,9 +52,50 @@ app.MapGet("/api/config", () => Results.Json(new
     sql = !string.IsNullOrWhiteSpace(sqlConn),
     cosmos = cosmosDirect is not null,
     api = http.BaseAddress is not null,
+    serviceBus = sbClient is not null,
     memberId = Db.MemberId,
     memberName = Db.MemberName,
 }));
+
+// ══════════════════════════════════════════════════════════════════════════
+// Exhibit #2 — Service Bus for synchronous reads (a cautionary tale).
+// Turn one DB read into a request/reply round-trip through a broker. The
+// optional ?poll= adds a naive client poll delay to show how much worse a
+// hand-rolled receive loop makes it.
+// ══════════════════════════════════════════════════════════════════════════
+app.MapGet("/api/ssn/via-servicebus/{id}", async (string id, int? poll) =>
+{
+    if (sbClient is null || sbRequests is null)
+        return Results.Json(new { error = "Service Bus not configured (flip enableServiceBus)" });
+
+    var corr = Guid.NewGuid().ToString("N");
+    var sw = Stopwatch.StartNew();
+    await sbRequests.SendMessageAsync(new ServiceBusMessage(id) { CorrelationId = corr });
+
+    await using var rx = sbClient.CreateReceiver("reveal-replies");
+    string? ssn = null;
+    var got = false;
+    // Single-user exhibit: take the next reply rather than strict-correlate +
+    // abandon (which, with no sessions on Basic, causes redelivery churn and the
+    // occasional lost reply). Still measures the full broker round-trip.
+    if (poll is > 0) await Task.Delay(poll.Value);
+    var msg = await rx.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
+    if (msg is not null)
+    {
+        ssn = msg.Body.ToString();
+        await rx.CompleteMessageAsync(msg);
+        got = true;
+    }
+    sw.Stop();
+    return Results.Json(new
+    {
+        ssn = string.IsNullOrEmpty(ssn) ? null : ssn,
+        path = "via-servicebus",
+        serverMs = sw.Elapsed.TotalMilliseconds,
+        pollMs = poll ?? 0,
+        timedOut = !got,
+    });
+});
 
 // ══════════════════════════════════════════════════════════════════════════
 // Exhibit #1 — SSN reveal latency: direct SQL vs API→SQL vs API→Cosmos
