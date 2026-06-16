@@ -56,9 +56,13 @@ Everything lands in one resource group, `rg-pg-playground`; `make down` deletes 
 
 The production reference is private-by-default, which forces private endpoints + a self-hosted VNet agent. Correct for prod, wrong for a playground. The playground goes **public** so a plain `az` login deploys it directly. Fast in, fast out.
 
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for the full topology (two resource groups, all services, and how the three exhibits flow through them).
+
 ## Exhibits
 
-See [EXHIBITS.md](EXHIBITS.md) for the running log of what's been bolted on. Exhibit #1: **SSN reveal latency** — does fronting a database with an API "take seconds"? (No.)
+See [EXHIBITS.md](EXHIBITS.md) for the running log of what's been added. Exhibit #1: **SSN reveal latency** — does fronting a database with an API "take seconds"? (No.)
 
 ## Adding a service / exhibit
 
