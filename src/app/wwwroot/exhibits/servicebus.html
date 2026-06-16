@@ -81,16 +81,16 @@
 
   <div class="panel">
     <strong>Reference results</strong>
-    <p class="sub" style="margin:.4rem 0 .6rem">Measured 2026-06-16, Central US, Basic tier. Same SSN read as Exhibit #1, routed through Service Bus request/reply.</p>
+    <p class="sub" style="margin:.4rem 0 .6rem">Measured 2026-06-16, Central US, Basic tier. Same SSN read, all <em>client-felt</em> (LAN browser round-trip) so the comparison is apples-to-apples. The live Reveal above reports server-side timings (lower; isolates the architecture from the network).</p>
     <table style="width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums">
       <thead><tr><th style="text-align:left;color:var(--muted);font-size:.82rem;padding:.4rem 0">path / mode</th><th style="text-align:right;color:var(--muted);font-size:.82rem">p50</th><th style="text-align:right;color:var(--muted);font-size:.82rem">vs API</th></tr></thead>
       <tbody>
-        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--api)"></span> API → SQL (Exhibit #1)</td><td style="text-align:right;font-weight:700">~20 ms</td><td style="text-align:right;color:var(--muted)">1×</td></tr>
-        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · long-poll</td><td style="text-align:right;font-weight:700">~450 ms</td><td style="text-align:right;color:var(--bad)">~22×</td></tr>
-        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · poll 1s</td><td style="text-align:right;font-weight:700">~1,150 ms</td><td style="text-align:right;color:var(--bad)">~57×</td></tr>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--api)"></span> API → SQL (Exhibit #1)</td><td style="text-align:right;font-weight:700">~63 ms</td><td style="text-align:right;color:var(--muted)">1×</td></tr>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · long-poll</td><td style="text-align:right;font-weight:700">~450 ms</td><td style="text-align:right;color:var(--bad)">~7×</td></tr>
+        <tr><td style="padding:.35rem 0"><span class="sw" style="background:var(--sb)"></span> Service Bus · poll 1s</td><td style="text-align:right;font-weight:700">~1,150 ms</td><td style="text-align:right;color:var(--bad)">~18×</td></tr>
       </tbody>
     </table>
-    <div class="ratio" style="margin-top:.9rem">Best case is ~10–25× the API tier; naive polling crosses <strong>one full second</strong>. And request/reply over a queue with no sessions occasionally <strong>loses replies entirely</strong> — slow <em>and</em> unreliable.</div>
+    <div class="ratio" style="margin-top:.9rem">~7× the API tier at best; naive polling crosses <strong>one full second</strong> (~18×). And request/reply over a queue with no sessions occasionally <strong>loses replies entirely</strong> — slow <em>and</em> unreliable.</div>
   </div>
 
   <div class="caveat"><strong>Why it's the wrong tool:</strong> queues exist to <em>decouple</em> producers from consumers for work that can happen <em>later</em> — not to answer a user staring at a screen <em>now</em>. Basic tier can't even do <code>sessions</code> (the proper way to correlate a reply to its request), so you hand-roll it. The latency you see isn't Service Bus being slow — it's the wrong shape for the job. <a class="back" href="/exhibits/ssn-latency.html" style="color:var(--accent)">← compare to Exhibit #1</a></div>

@@ -59,14 +59,16 @@ make all SVC=sql,cosmos,api,sb WARM=1 SQL_PASSWORD='...' API_SECRET='...'
 # open /exhibits/servicebus.html → Reveal, try the poll modes, Run 10×
 ```
 
-**Results (2026-06-16, Central US, Basic):**
+**Results (2026-06-16, Central US, Basic — client-felt, LAN browser):**
+
+![Service Bus anti-pattern results](docs/servicebus-results.png)
 
 | path / mode | p50 | vs API tier |
 |---|---|---|
-| API → SQL (Exhibit #1) | ~20 ms | 1× |
-| Service Bus · long-poll | ~450 ms | ~22× |
-| Service Bus · poll 1s (naive) | ~1,150 ms | ~57× |
+| API → SQL (Exhibit #1) | ~63 ms | 1× |
+| Service Bus · long-poll | ~450 ms | ~7× |
+| Service Bus · poll 1s (naive) | ~1,150 ms | ~18× |
 
-Best case is ~10–25× the API tier; naive polling crosses **a full second** — the literal "seconds," delivered by the wrong tool. Basic tier has no sessions to correlate replies cleanly, so request/reply over the queue also **occasionally loses replies** — slow *and* unreliable. Queues are for async decoupling, not answering a user who's waiting.
+All client-felt (same LAN-browser vantage, apples-to-apples). ~7× the API tier at best; naive polling crosses **a full second** (~18×) — the literal "seconds," delivered by the wrong tool. Basic tier has no sessions to correlate replies cleanly, so request/reply over the queue also **occasionally loses replies** — slow *and* unreliable. Queues are for async decoupling, not answering a user who's waiting. Graphic generator: [`docs/servicebus-chart.html`](docs/servicebus-chart.html).
 
 **Status:** live and measured.
