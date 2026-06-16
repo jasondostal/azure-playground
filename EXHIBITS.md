@@ -102,6 +102,17 @@ make outputs                                              # Functions URL + Even
 make down                                                 # reclaim everything
 ```
 
-Post-deploy provisioning (SB entities, Cosmos `items`/`leases` containers, App Insights, connection settings, the Event Grid → function subscription) is handled idempotently by `scripts/wire-functions.sh`, called from `make deploy`.
+Runs on a Linux **Consumption (Y1)** plan in its own resource group `rg-pg-playground-fn`
+(a Linux Y1 plan can't share an RG with a regular App Service plan, and the dedicated-plan
+`dotnet-isolated` runtime images aren't published). **.NET 9 isolated** — no .NET 10 Linux
+Functions image exists yet. Post-deploy provisioning (SB entities, Cosmos `items`/`leases`
+containers, App Insights, connection settings, the Event Grid → function subscription) is
+handled idempotently by `scripts/wire-functions.sh`, called from `make deploy`.
 
-**Status:** built; first live run pending.
+**Verified (2026-06-16):** a write flows end-to-end —
+`POST /api/items` → 201 (Cosmos output binding) · `GET /api/items/{id}` round-trips (Cosmos
+input binding) · `POST /api/webhook` → 202 lands a message on the `ingress` queue · and the
+item write fired the **Cosmos change feed → `db-events` queue**. HTTP → Cosmos → change feed →
+Service Bus, proven.
+
+**Status:** live and verified.

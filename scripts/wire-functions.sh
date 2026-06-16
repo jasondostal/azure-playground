@@ -60,7 +60,10 @@ else
 fi
 az functionapp config appsettings set -g "$FN_RG" -n "$FN" --settings "${SETTINGS[@]}" -o none && echo "   app settings set"
 
-# 5. Deploy the Functions code
+# 5. Deploy the Functions code. Linux Consumption rejects WEBSITE_RUN_FROM_PACKAGE=1
+#    (the function-app module presets it); config-zip sets its own package URL, so
+#    clear it first or the deploy 400s.
+az functionapp config appsettings delete -g "$FN_RG" -n "$FN" --setting-names WEBSITE_RUN_FROM_PACKAGE -o none 2>/dev/null || true
 az functionapp deployment source config-zip -g "$FN_RG" -n "$FN" --src dist/functions.zip -o none && echo "   code deployed"
 
 # 6. Event Grid custom topic → EventGridIngress function
