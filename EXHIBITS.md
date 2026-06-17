@@ -116,3 +116,61 @@ item write fired the **Cosmos change feed → `db-events` queue**. HTTP → Cosm
 Service Bus, proven.
 
 **Status:** live and verified.
+
+---
+
+## #4 — Fan-out, two ways
+
+**The question:** the AWS fan-out everyone knows is SNS → (N×) SQS → Lambda: publish once,
+each consumer gets its own durable copy. What does that shape look like in Azure, and what
+changes if you build it from the cheap primitives instead of the obvious one?
+
+**What it does:** publishes one event down two paths and shows each of two consumers
+receiving its own copy on each path.
+
+- **Service Bus** — a topic `fanout` with subscriptions `f-sub-a` / `f-sub-b`, a function on
+  each. This is the close 1:1 to SNS→SQS: a subscription *is* a durable queue, so one
+  service does both the broadcast and the per-consumer buffer. Needs **Standard**
+  (`SB_TOPICS=1`); topics don't exist on Basic.
+- **Event Grid → Storage Queues** — the Event Grid topic fans out via two subscriptions into
+  two Storage Queues (`fanout-a` / `fanout-b`), a function draining each. Same shape from
+  cheaper parts: Event Grid as the broadcast, a Storage Queue as each consumer's durable
+  buffer.
+
+Every consumer writes a receipt to the Cosmos `fanout` container; the app reads receipts by
+correlationId so the page lights up each consumer as its copy lands. The publishing lives in
+`src/app` (so the UI drives both paths); the consumers are in `src/functions/Fanout4.cs`
+(parallel to #3's scenario-3 fan-out, which is left untouched).
+
+**Services:** `sb` (+ `SB_TOPICS=1` for the Service Bus path), `eg`, `storage`, `fn`, plus
+`cosmos` for the receipts.
+
+| AWS | Service Bus way | Event Grid way |
+|---|---|---|
+| SNS topic | Service Bus topic | Event Grid topic |
+| SQS queue (per consumer) | topic subscription *(built in)* | Storage Queue per subscription |
+| consumer Lambda | function on the subscription | function on the queue |
+
+**Run it:**
+```
+make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1
+# open the printed URL → /exhibits/fanout.html → Publish once
+```
+
+**Status:** live and verified (2026-06-17, Central US). One publish reached all four consumers
+— `servicebus` A+B and `eventgrid` A+B — each writing its receipt, in ~10s from cold. Service
+Bus delivers in ~3s (warm topic); the Event Grid path runs ~3–4s behind it (extra push +
+queue-trigger hop), both well under the 15s poll window.
+
+The unknowns from the build, resolved on the live run:
+- **Event Grid → Storage Queue delivery needs no extra identity** — the subscription created
+  with just the storage account resource id delivers fine out of the box.
+- **The real gotcha was the event shape, not auth.** Publishing a `BinaryData` payload lands
+  the data under the CloudEvent's `data_base64` member (base64'd inner JSON), *not* `data` —
+  so the consumer's correlationId lookup missed and receipts were written under an unmatchable
+  id (delivery, queue, trigger, and Cosmos all worked; only the id was wrong). Fixed both ends:
+  publish the data as a JSON object (clean `data`), and the extractor now also cracks
+  `data_base64`. Covered by a test so it can't regress.
+- **#3/#4 share the Event Grid topic**, so running both at once drops a harmless extra message
+  on #3's `ingress` queue (its subscription is unfiltered; #4's are filtered to `pg.fanout`).
+  Run one exhibit at a time.

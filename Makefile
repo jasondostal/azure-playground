@@ -85,9 +85,11 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	SBNS=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.serviceBusNamespace.value -o tsv); \
 	FNURL=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.functionsUrl.value -o tsv); \
 	EGEP=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.eventGridEndpoint.value -o tsv); \
-	KEY=""; SBCONN=""; \
+	EGT=$$(az deployment sub show -n $(DEPLOY) --query properties.outputs.eventGridName.value -o tsv); \
+	KEY=""; SBCONN=""; EGKEY=""; \
 	if [ -n "$$COSMOS" ]; then KEY=$$(az cosmosdb keys list -g $(RG) -n "$$COSMOS" --query primaryMasterKey -o tsv); fi; \
 	if [ -n "$$SBNS" ]; then SBCONN=$$(az servicebus namespace authorization-rule keys list -g $(RG) --namespace-name "$$SBNS" --name RootManageSharedAccessKey --query primaryConnectionString -o tsv); fi; \
+	if [ -n "$$EGT" ]; then EGKEY=$$(az eventgrid topic key list -g $(RG) -n "$$EGT" --query key1 -o tsv); fi; \
 	if [ -n "$$API" ]; then \
 	  echo ">> deploying API → $$API"; \
 	  az webapp deploy -g $(RG) -n "$$API" --src-path dist/api.zip --type zip --track-status false; \
@@ -100,7 +102,8 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	  [ -n "$$KEY" ] && { echo ">> Cosmos key → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings COSMOS_KEY="$$KEY" -o none; }; \
 	  [ -n "$$SBCONN" ] && { echo ">> SB conn → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings SERVICEBUS_CONNECTION="$$SBCONN" -o none; }; \
 	  [ -n "$(EASYAUTH_SECRET)" ] && { echo ">> Easy Auth secret → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings MICROSOFT_PROVIDER_AUTHENTICATION_SECRET="$(EASYAUTH_SECRET)" -o none; }; \
-	  [ -n "$$FNURL" ] && az webapp config appsettings set -g $(RG) -n "$$APP" --settings FUNCTIONS_BASEURL="$$FNURL" EVENTGRID_ENDPOINT="$$EGEP" -o none; \
+	  [ -n "$$EGEP" ] && { echo ">> Event Grid endpoint+key → $$APP"; az webapp config appsettings set -g $(RG) -n "$$APP" --settings EVENTGRID_ENDPOINT="$$EGEP" EVENTGRID_KEY="$$EGKEY" -o none; }; \
+	  [ -n "$$FNURL" ] && az webapp config appsettings set -g $(RG) -n "$$APP" --settings FUNCTIONS_BASEURL="$$FNURL" -o none; \
 	fi; \
 	echo ">> live at: $$(az deployment sub show -n $(DEPLOY) --query properties.outputs.appUrl.value -o tsv)"
 	@bash scripts/wire-functions.sh

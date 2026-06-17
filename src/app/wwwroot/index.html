@@ -65,6 +65,11 @@
         <p>The "ESB" that isn't: one Function App + Service Bus proving the five integration reflexes — webhook ingress, sync APIs, fan-out, queue→adapter, DB change feed.</p>
         <div class="chips"><span class="chip">Functions</span><span class="chip">Service Bus</span><span class="chip">Event Grid</span><span class="chip">integration</span></div>
       </a>
+      <a class="card" href="/exhibits/fanout.html">
+        <h3><span class="num">#4</span> &nbsp;Fan-out, two ways</h3>
+        <p>The AWS SNS→SQS→Lambda fan-out, rebuilt in Azure two ways: a Service Bus topic with subscriptions, and Event Grid into Storage Queues. Publish once, watch both consumers receive a copy.</p>
+        <div class="chips"><span class="chip">Service Bus</span><span class="chip">Event Grid</span><span class="chip">Storage Queues</span><span class="chip">Functions</span></div>
+      </a>
     </div>
   </main>
   <footer>composes the same modules as azure-platform-iac, dialled to cheap · <code>make down</code> to vanish it all</footer>

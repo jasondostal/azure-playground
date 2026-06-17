@@ -2,7 +2,21 @@
 
 Newest first.
 
-- [ ] **Exhibit #3 (Nervous System) — first live deploy of the Functions tier.** Now wired to
+- [x] **Exhibit #4 — fan-out.** Live and verified 2026-06-17 — one publish reached all four
+      consumers (Service Bus A+B, Event Grid A+B). Both paths coded (SB topic+subs; Event Grid
+      → Storage Queues), consumers in `src/functions/Fanout4.cs`, publish + receipts endpoints
+      in `src/app`, page at `/exhibits/fanout.html`, 8 tests passing. Deploy:
+        `make all SVC=cosmos,sb,storage,eg,fn SB_TOPICS=1`  → /exhibits/fanout.html
+      (sql/api dropped — #4 doesn't use them.) Live-run finding: Event Grid puts a BinaryData
+      payload under `data_base64`, not `data` — fixed both publisher and extractor (see
+      EXHIBITS.md #4).
+
+- [ ] **(Post-#4) Event-flow modeling UI.** A view in the app to define event schemas
+      and route them — e.g. "customer.created" fires here, goes to consumers X / Y / Z —
+      and see the flow laid out visually. A thought for after #4, not before.
+
+- [x] **Exhibit #3 (Nervous System) — first live deploy of the Functions tier.** Done —
+      live and verified 2026-06-16 (HTTP → Cosmos → change feed → Service Bus proven). Now wired to
       run on a **Linux Consumption (Y1) plan in its own resource group** (`rg-pg-playground-fn`,
       created by the same sub-scoped bicep; `make down` deletes both RGs). This dodges both
       earlier blockers: the Y1-can't-share-an-RG rule, and the missing dedicated-plan

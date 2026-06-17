@@ -79,4 +79,66 @@ if [ -n "$EGT" ]; then
     || echo "   (Event Grid subscription deferred — re-run 'make deploy' once the function is warm)"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Exhibit #4 — fan-out, two ways. Service Bus topic 'fanout' (+ f-sub-a/b) is
+#    the SNS→SQS twin (one service); Event Grid → two Storage Queues is the same
+#    pattern from cheaper parts. Consumers write receipts to Cosmos 'fanout'.
+# ─────────────────────────────────────────────────────────────────────────────
+STG=$(out storageName)
+
+# Cosmos receipts container (idempotent)
+[ -n "$COSMOS" ] && az cosmosdb sql container create -g "$RG" -a "$COSMOS" -d playground -n fanout -p /id -o none 2>/dev/null \
+  && echo "   cosmos container: fanout"
+
+# Service Bus topic + two subscriptions — Standard tier only (queues-only on Basic)
+if [ -n "$SBNS" ] && [ "$SKU" = "Standard" ]; then
+  az servicebus topic create -g "$RG" --namespace-name "$SBNS" -n fanout -o none 2>/dev/null || true
+  for s in f-sub-a f-sub-b; do
+    az servicebus topic subscription create -g "$RG" --namespace-name "$SBNS" --topic-name fanout -n "$s" -o none 2>/dev/null || true
+  done
+  echo "   topic: fanout (+ f-sub-a, f-sub-b)"
+fi
+
+# Storage queues the Event Grid topic fans out into + the Functions connection.
+STGCONN=""
+if [ -n "$STG" ]; then
+  STGCONN=$(az storage account show-connection-string -g "$RG" -n "$STG" --query connectionString -o tsv)
+  for q in fanout-a fanout-b; do
+    az storage queue create --name "$q" --account-name "$STG" --connection-string "$STGCONN" -o none 2>/dev/null \
+      && echo "   storage queue: $q"
+  done
+fi
+
+# Function settings for #4: storage connection + enable/disable consumers per tier.
+# (Fan4SbA/B need the topic → Standard; Fan4EgA/B need the storage queues.)
+FANSET=()
+[ -n "$STGCONN" ] && FANSET+=("FanoutStorageConnection=$STGCONN")
+if [ "$SKU" = "Standard" ]; then
+  FANSET+=("AzureWebJobs.Fan4SbA.Disabled=false" "AzureWebJobs.Fan4SbB.Disabled=false")
+else
+  FANSET+=("AzureWebJobs.Fan4SbA.Disabled=true" "AzureWebJobs.Fan4SbB.Disabled=true")
+fi
+if [ -n "$STGCONN" ]; then
+  FANSET+=("AzureWebJobs.Fan4EgA.Disabled=false" "AzureWebJobs.Fan4EgB.Disabled=false")
+else
+  FANSET+=("AzureWebJobs.Fan4EgA.Disabled=true" "AzureWebJobs.Fan4EgB.Disabled=true")
+fi
+az functionapp config appsettings set -g "$FN_RG" -n "$FN" --settings "${FANSET[@]}" -o none && echo "   fan-out (#4) settings set"
+
+# Event Grid → Storage Queue subscriptions (filtered to the #4 event type so they
+# don't collide with the #3 ingress subscription on the same topic).
+if [ -n "$EGT" ] && [ -n "$STG" ]; then
+  EG_TOPIC_ID=$(az eventgrid topic show -g "$RG" -n "$EGT" --query id -o tsv)
+  STG_ID=$(az storage account show -g "$RG" -n "$STG" --query id -o tsv)
+  for q in a b; do
+    az eventgrid event-subscription create --name "fanout-$q" \
+      --source-resource-id "$EG_TOPIC_ID" \
+      --endpoint-type storagequeue \
+      --endpoint "${STG_ID}/queueServices/default/queues/fanout-$q" \
+      --included-event-types pg.fanout -o none 2>/dev/null \
+      && echo "   Event Grid → queue fanout-$q" \
+      || echo "   (EG→fanout-$q deferred — re-run 'make deploy')"
+  done
+fi
+
 echo ">> integration tier wired: $FNURL"

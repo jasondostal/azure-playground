@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exhibit #4 — Fan-out, two ways</title>
+<style>
+  :root{
+    --bg:oklch(0.17 0.02 265);--panel:oklch(0.22 0.03 265);--panel2:oklch(0.25 0.03 265);
+    --line:oklch(0.32 0.03 265);--text:oklch(0.93 0.01 265);--muted:oklch(0.68 0.02 265);
+    --accent:oklch(0.78 0.17 150);--sb:oklch(0.72 0.15 230);--eg:oklch(0.74 0.16 310);
+    --idle:oklch(0.3 0.02 265);--ok:oklch(0.78 0.17 150);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:1.5rem}
+  a.back{color:var(--muted);text-decoration:none;font-size:.9rem}a.back:hover{color:var(--accent)}
+  h1{font-size:1.5rem;margin:.6rem 0 .2rem}
+  .sub{color:var(--muted);margin:0 0 1.4rem}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
+  .banner{background:oklch(0.28 0.06 75);border:1px solid oklch(0.8 0.15 75);border-radius:10px;padding:.7rem 1rem;margin-bottom:1.2rem;font-size:.92rem}
+  code{background:var(--panel2);padding:.05rem .35rem;border-radius:4px;font-size:.85em}
+  button{cursor:pointer;font:inherit;font-weight:700;color:var(--bg);background:var(--accent);border:0;border-radius:9px;padding:.6rem 1.1rem}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
+  .mech{font-size:.92rem;color:var(--muted)}.mech b{color:var(--text)}
+  pre.flow{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;font-size:.8rem;overflow:auto;color:var(--text);margin:.6rem 0 0}
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:640px){.paths{grid-template-columns:1fr}}
+  .path h3{margin:0 0 .2rem;font-size:1.05rem;display:flex;align-items:center;gap:.45rem}
+  .dot{width:.7rem;height:.7rem;border-radius:3px;display:inline-block}
+  .path .what{color:var(--muted);font-size:.85rem;margin:0 0 .8rem}
+  .cells{display:grid;gap:.5rem}
+  .cell{display:flex;align-items:center;gap:.6rem;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:.6rem .8rem;transition:border-color .2s,background .2s}
+  .cell.lit{border-color:var(--ok);background:oklch(0.26 0.06 150)}
+  .led{width:.85rem;height:.85rem;border-radius:50%;background:var(--idle);flex:none;transition:background .2s,box-shadow .2s}
+  .cell.lit .led{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .cell .lbl{font-weight:600}.cell .t{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:.82rem}
+  .na{opacity:.45}
+  .status{margin-top:1rem;color:var(--muted);font-size:.9rem;min-height:1.2em}
+  table{width:100%;border-collapse:collapse;font-size:.88rem}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:.82rem;padding:.35rem .5rem}
+  td{padding:.45rem .5rem;border-top:1px solid var(--line);vertical-align:top}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← back to the lab</a>
+  <h1>Exhibit #4 — Fan-out, two ways</h1>
+  <p class="sub">One published event, two independent consumers, each getting its own copy — built two different ways in Azure. The AWS shape everyone knows: publish to an SNS topic, two SQS queues subscribed, a Lambda draining each.</p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="panel">
+    <div class="mech">Same job both ways: <b>publish once → A and B each receive a copy independently</b>. The difference is what carries it.</div>
+    <div class="paths" style="margin-top:1rem">
+      <div>
+        <div class="mech"><span class="dot" style="background:var(--sb)"></span> <b>Service Bus topic</b> — the SNS+SQS twin folded into one service. A subscription <em>is</em> a durable queue.</div>
+        <pre class="flow">publish → topic 'fanout'
+   ├─ subscription f-sub-a → Fn
+   └─ subscription f-sub-b → Fn</pre>
+      </div>
+      <div>
+        <div class="mech"><span class="dot" style="background:var(--eg)"></span> <b>Event Grid → Storage Queues</b> — the same pattern from cheaper parts. Event Grid pushes; each Storage Queue is the durable buffer.</div>
+        <pre class="flow">publish → Event Grid topic
+   ├─ sub → queue fanout-a → Fn
+   └─ sub → queue fanout-b → Fn</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <strong>Publish one event, watch both consumers receive it</strong>
+      <button id="go">Publish once</button>
+    </div>
+    <div class="paths" style="margin-top:1rem">
+      <div class="path" id="pathSb">
+        <h3><span class="dot" style="background:var(--sb)"></span> Service Bus</h3>
+        <p class="what">topic <code>fanout</code> → two subscriptions</p>
+        <div class="cells">
+          <div class="cell" id="sb-A"><span class="led"></span><span class="lbl">Consumer A</span><span class="t"></span></div>
+          <div class="cell" id="sb-B"><span class="led"></span><span class="lbl">Consumer B</span><span class="t"></span></div>
+        </div>
+      </div>
+      <div class="path" id="pathEg">
+        <h3><span class="dot" style="background:var(--eg)"></span> Event Grid</h3>
+        <p class="what">topic → two Storage Queues</p>
+        <div class="cells">
+          <div class="cell" id="eg-A"><span class="led"></span><span class="lbl">Consumer A</span><span class="t"></span></div>
+          <div class="cell" id="eg-B"><span class="led"></span><span class="lbl">Consumer B</span><span class="t"></span></div>
+        </div>
+      </div>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="panel">
+    <strong>How it maps to AWS</strong>
+    <table style="margin-top:.6rem">
+      <thead><tr><th>AWS</th><th>Service Bus way</th><th>Event Grid way</th></tr></thead>
+      <tbody>
+        <tr><td>SNS topic (broadcast)</td><td>Service Bus topic</td><td>Event Grid topic</td></tr>
+        <tr><td>SQS queue (durable buffer per consumer)</td><td>topic subscription <em>(built in)</em></td><td>Storage Queue per subscription</td></tr>
+        <tr><td>consumer Lambda</td><td>function on the subscription</td><td>function on the queue</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin:.8rem 0 0">Service Bus folds the broadcast and the per-consumer buffer into one resource and brings the richer semantics (sessions, ordering, dead-letter). Event Grid + Storage Queues wire the same shape from two cheaper primitives. Both deliver one copy to A and one to B — that's the thing being shown.</p>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let cfg={serviceBus:false,eventGrid:false};
+const cid=()=>{const a=new Uint8Array(16);crypto.getRandomValues(a);return[...a].map(b=>b.toString(16).padStart(2,'0')).join('');};
+
+async function init(){
+  try{cfg=await(await fetch("/api/config")).json();}catch{}
+  const miss=[];
+  if(!cfg.serviceBus){miss.push("<code>enableServiceBus</code> + <code>SB_TOPICS=1</code>");markNA("pathSb");}
+  if(!cfg.eventGrid){miss.push("<code>enableEventGrid</code>");markNA("pathEg");}
+  if(miss.length){const b=$("#banner");b.hidden=false;
+    b.innerHTML="Some paths aren't wired: needs "+miss.join(" and ")+". Full demo: <code>make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1</code>.";}
+}
+function markNA(id){const p=$("#"+id);if(p){p.classList.add("na");p.querySelectorAll(".t").forEach(t=>t.textContent="not wired");}}
+function reset(){["sb-A","sb-B","eg-A","eg-B"].forEach(id=>{const c=$("#"+id);c.classList.remove("lit");if(!c.closest(".na"))c.querySelector(".t").textContent="";});}
+
+$("#go").onclick=async()=>{
+  $("#go").disabled=true;reset();
+  const id=cid();const t0=performance.now();const st=$("#status");
+  const paths=[];if(cfg.serviceBus)paths.push("sb");if(cfg.eventGrid)paths.push("eg");
+  if(!paths.length){st.textContent="No fan-out path is wired — see the note above.";$("#go").disabled=false;return;}
+  st.textContent="publishing…";
+  const pubErr=[];
+  await Promise.all(paths.map(async p=>{
+    try{const r=await(await fetch(`/api/fanout/publish?path=${p}&cid=${id}`,{method:"POST"})).json();if(r.error)pubErr.push(`${p}: ${r.error}`);}
+    catch(e){pubErr.push(`${p}: ${e}`);}
+  }));
+  if(pubErr.length)st.innerHTML="published with warnings — "+pubErr.join(" · ");
+  else st.textContent="published — waiting for consumers to receive their copies…";
+
+  // poll receipts for ~15s; light each consumer as its receipt lands.
+  const want=paths.length*2;const seen=new Set();
+  for(let i=0;i<22 && seen.size<want;i++){
+    await new Promise(r=>setTimeout(r,700));
+    let rec=[];try{rec=(await(await fetch(`/api/fanout/receipts/${id}`)).json()).receipts||[];}catch{}
+    for(const r of rec){
+      const key=(r.path==="servicebus"?"sb":"eg")+"-"+r.consumer;
+      if(seen.has(key))continue;seen.add(key);
+      const c=$("#"+key);if(c){c.classList.add("lit");c.querySelector(".t").textContent=((performance.now()-t0)/1000).toFixed(1)+"s";}
+    }
+  }
+  st.textContent = seen.size>=want
+    ? `All ${want} consumers received their copy — one publish, fanned out ${want} ways.`
+    : `${seen.size} of ${want} received within 15s. (Cold Functions can lag the first run; click again.)`;
+  $("#go").disabled=false;
+};
+init();
+</script>
+</body>
+</html>

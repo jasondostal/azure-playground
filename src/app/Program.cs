@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using Azure;
+using Azure.Messaging;
+using Azure.Messaging.EventGrid;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Playground.App;
@@ -27,12 +30,15 @@ if (!string.IsNullOrWhiteSpace(apiBase)) http.BaseAddress = new Uri(apiBase);
 if (!string.IsNullOrEmpty(apiSecret)) http.DefaultRequestHeaders.Add("X-Playground-Key", apiSecret);
 
 // Direct (in-process) Cosmos client — gateway mode (App Service sandbox).
+// `members` feeds the latency exhibit; `fanout` holds Exhibit #4's receipts.
 Container? cosmosDirect = null;
+Container? fanoutReceipts = null;
 if (!string.IsNullOrWhiteSpace(cosmosEndpoint) && !string.IsNullOrWhiteSpace(cosmosKey))
 {
     var cc = new CosmosClient(cosmosEndpoint, cosmosKey,
         new CosmosClientOptions { ConnectionMode = ConnectionMode.Gateway });
     cosmosDirect = cc.GetContainer("playground", "members");
+    fanoutReceipts = cc.GetContainer("playground", "fanout");
 }
 
 // Exhibit #2: Service Bus client for the (ill-advised) sync request/reply path.
@@ -41,6 +47,19 @@ ServiceBusClient? sbClient = !string.IsNullOrWhiteSpace(sbConn)
     ? new ServiceBusClient(sbConn, new ServiceBusClientOptions { TransportType = ServiceBusTransportType.AmqpWebSockets })
     : null;
 ServiceBusSender? sbRequests = sbClient?.CreateSender("reveal-requests");
+
+// Exhibit #4 — fan-out publishers. The app sends one event down a chosen path;
+// the consumers (in the Functions tier) each record a receipt the page reads back.
+//   • Service Bus: a sender on the 'fanout' TOPIC (exists only on Standard / SB_TOPICS=1).
+//   • Event Grid:  a publisher to the custom topic (endpoint + key injected post-deploy).
+ServiceBusSender? sbFanout = sbClient?.CreateSender("fanout");
+
+var egEndpoint = Environment.GetEnvironmentVariable("EVENTGRID_ENDPOINT") ?? "";
+var egKey = Environment.GetEnvironmentVariable("EVENTGRID_KEY") ?? "";
+EventGridPublisherClient? egClient =
+    (!string.IsNullOrWhiteSpace(egEndpoint) && !string.IsNullOrWhiteSpace(egKey))
+        ? new EventGridPublisherClient(new Uri(egEndpoint), new AzureKeyCredential(egKey))
+        : null;
 
 await Db.EnsureSqlSeed(sqlConn, app.Logger);
 
@@ -53,11 +72,69 @@ app.MapGet("/api/config", () => Results.Json(new
     cosmos = cosmosDirect is not null,
     api = http.BaseAddress is not null,
     serviceBus = sbClient is not null,
+    eventGrid = egClient is not null,
     functionsUrl = Environment.GetEnvironmentVariable("FUNCTIONS_BASEURL") ?? "",
-    eventGridEndpoint = Environment.GetEnvironmentVariable("EVENTGRID_ENDPOINT") ?? "",
+    eventGridEndpoint = egEndpoint,
     memberId = Db.MemberId,
     memberName = Db.MemberName,
 }));
+
+// ══════════════════════════════════════════════════════════════════════════
+// Exhibit #4 — fan-out, two ways. Publish one event down a path; each consumer
+// writes a receipt to Cosmos, which the page polls for by correlationId.
+// ══════════════════════════════════════════════════════════════════════════
+app.MapPost("/api/fanout/publish", async (HttpContext ctx) =>
+{
+    var path = ctx.Request.Query["path"].ToString();          // "sb" | "eg"
+    var corr = ctx.Request.Query["cid"].ToString();
+    if (string.IsNullOrWhiteSpace(corr)) corr = Guid.NewGuid().ToString("N");
+    var payload = $"{{\"correlationId\":\"{corr}\"}}";
+    try
+    {
+        switch (path)
+        {
+            case "sb":
+                if (sbFanout is null) return Results.Json(new { error = "Service Bus not configured (flip enableServiceBus + SB_TOPICS=1)", corr, path });
+                await sbFanout.SendMessageAsync(new ServiceBusMessage(payload));
+                break;
+            case "eg":
+                if (egClient is null) return Results.Json(new { error = "Event Grid not configured (flip enableEventGrid + redeploy)", corr, path });
+                // Pass the data as a JSON-serializable object so it rides in the CloudEvent's
+                // `data` field. (A BinaryData payload lands in `data_base64` instead, which the
+                // consumer also handles, but `data` is the clean shape.)
+                await egClient.SendEventAsync(new CloudEvent("playground/fanout", "pg.fanout", new { correlationId = corr }));
+                break;
+            default:
+                return Results.Json(new { error = "path must be 'sb' or 'eg'", corr, path });
+        }
+    }
+    catch (Exception ex)
+    {
+        // On Basic, the 'fanout' topic doesn't exist — surface it instead of 500ing.
+        return Results.Json(new { error = ex.Message, corr, path });
+    }
+    return Results.Json(new { corr, path, ok = true });
+});
+
+app.MapGet("/api/fanout/receipts/{cid}", async (string cid) =>
+{
+    if (fanoutReceipts is null) return Results.Json(new { error = "Cosmos not configured (flip enableCosmos)" });
+    var receipts = new List<object>();
+    try
+    {
+        var q = new QueryDefinition("SELECT c.path, c.consumer, c.receivedAt FROM c WHERE c.correlationId = @cid")
+            .WithParameter("@cid", cid);
+        using var it = fanoutReceipts.GetItemQueryIterator<FanoutReceipt>(q);
+        while (it.HasMoreResults)
+            foreach (var r in await it.ReadNextAsync())
+                receipts.Add(new { r.path, r.consumer, r.receivedAt });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { cid, receipts, note = ex.Message });
+    }
+    return Results.Json(new { cid, receipts });
+});
 
 // ══════════════════════════════════════════════════════════════════════════
 // Exhibit #2 — Service Bus for synchronous reads (a cautionary tale).
@@ -183,3 +260,6 @@ app.MapGet("/api/bench", async (int n, string? id) =>
 app.Run();
 
 record ApiResp(string? ssn, string source, double dbMs, string? error);
+
+// Exhibit #4 receipt projection (lowercase to match the Cosmos doc fields).
+record FanoutReceipt(string path, string consumer, string receivedAt);
