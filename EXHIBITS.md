@@ -174,3 +174,83 @@ The unknowns from the build, resolved on the live run:
 - **#3/#4 share the Event Grid topic**, so running both at once drops a harmless extra message
   on #3's `ingress` queue (its subscription is unfiltered; #4's are filtered to `pg.fanout`).
   Run one exhibit at a time.
+
+---
+
+## #5 — The App Map draws itself (observability)
+
+**The question:** the pitch is "Application Insights is way better than Dynatrace." Can we
+*show* it instead of asserting it — and honestly, without strawmanning a strong competitor?
+
+**The point:** every prior exhibit already calls across App Service, the API tier, SQL, Cosmos,
+Service Bus, Event Grid and Functions. Nobody was watching. Turn on Application Insights — **one
+resource, one connection string, no agent installed on any host** — and the whole topology, call
+rates, dependency latencies and failures appear from the traffic itself. That "no agent rollout +
+KQL + $0-at-rest" combination is the defensible case for an Azure-native app; the demo is built to
+win on it, not to pretend Dynatrace has no answer (it does — Davis AI root-cause and full-stack
+host coverage are real, and the exhibit says so).
+
+**What it adds:**
+- **Instrumentation** is one line per app — `AddApplicationInsightsTelemetry()` in the web app and
+  the API tier (the Functions app was already instrumented for #3). No role-name overrides: the
+  three nodes auto-name as their site names (`pg-app-*`, `pg-api-*`, `pg-fn-*`). Dependency calls
+  (SQL, Cosmos, the HTTP hop, Service Bus, Event Grid) and the request graph are captured
+  automatically, W3C-correlated end-to-end.
+- **App Insights is now always-on**, provisioned by `scripts/wire-observability.sh` (workspace-based
+  `pg-ai` in `rg-pg-playground`) and the connection string injected into both apps by `make deploy`.
+  Free at rest — pay only per GB ingested — so it costs nothing until you generate load.
+- **A load generator + fault injection.** `POST /api/observe/load?n=&faultPct=&chain=` drives N
+  end-to-end transactions through the stack (`chain=full` adds the Service Bus / Event Grid →
+  Functions hop). A `faultPct` slice asks the API tier to misbehave — `?fault=error` (500, red edge)
+  or `?fault=slow` (amber) — evenly spread so the map shows a steady failed/slow fraction. Each
+  transaction emits a custom metric (`pg.txn.ms`) and event (`pg.txn`) with outcome/fault dimensions.
+- **Page** at `/exhibits/observability.html`: run load, see the counts, then deep-link straight to
+  the portal's App Map / Live Metrics / Failures / Performance / Logs blades (built from
+  `AI_RESOURCE_ID`). The honest Dynatrace comparison table lives on the page.
+- **A KQL query pack** — [`docs/observability-kql.md`](docs/observability-kql.md) — the app map as a
+  query, the end-to-end transaction replay, the custom metric/event breakdowns. KQL is the part of
+  the pitch that's hardest to argue with.
+
+**Services:** `api` + `cosmos` at minimum (web → API → SQL/Cosmos); add `sb,storage,eg,fn`
+(`SB_TOPICS=1`) for the full-chain map. App Insights itself needs no toggle — it's wired on every deploy.
+
+**Run it:**
+```
+make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1   # full topology on the map
+# open the printed URL → /exhibits/observability.html → set fault %, Run load
+# wait ~30–90s, then click "Application Map ▸"
+```
+
+**Tests:** fault parsing, the even fault-spread (count matches the percentage exactly, no clumping),
+and the portal-link builder are covered in `ObservabilityTests` (no Azure needed).
+
+**Status:** live and verified (2026-06-24, Central US). One deploy +
+`POST /api/observe/load?n=100&faultPct=30&chain=full` drew the full map from telemetry alone:
+
+![Application Map — pg-app → pg-api (red, 100% failed edge) → Cosmos, plus Service Bus and the Functions fan-out](docs/observability-appmap.png)
+
+The red edges into `pg-api` carry the injected-fault failure rates (one at 100%); node rings show the
+error percentage. The whole graph is auto-discovered — nothing here was drawn by hand.
+
+- **3 nodes** by cloud role — `pg-app` (web), `pg-api`, `pg-fn` — auto-named, no config.
+- **Edges, all auto-captured:** `pg-app → pg-api` (HTTP), `pg-app → Cosmos` (direct), `pg-app →
+  Service Bus /fanout`, `pg-api → Cosmos` (SQL off this run), `pg-fn → Cosmos` (the fan-out
+  consumers writing receipts). Service Bus, Event Grid, Cosmos and the HTTP hop all show as typed
+  dependency edges.
+- **Fault injection landed as real failures:** `pg-api` logged 18 failed requests and the
+  `pg-app → pg-api` edge 17 failed calls (the injected 500s) — a red edge on the map. The `slow`
+  faults show as the fat p95 (~470ms vs ~70ms baseline).
+- **Cross-process correlation across the async bus hop works:** trace context propagates web →
+  Service Bus → Functions (operation_Ids span `pg-app` and `pg-fn`). Functions isolated-worker
+  correlates a subset of bus-triggered invocations; the dependency edge is drawn regardless.
+
+A live-run gotcha worth keeping: **F1 serves the old code for ~30–60s after a zip redeploy** — the
+first load run after a code change reported stale behaviour (faults not failing) until the new
+instance took over. Warm with a throwaway request and re-run, or use `WARM=1` (B1) for a demo.
+
+One bug the live run caught that the unit tests didn't: the error/slow split was keyed on
+transaction index parity, but `IsFaultIndex` can hand back indices that all share a parity (every
+4th at 25%), so every fault came out the same kind. Fixed to alternate on the fault-event counter.
+
+**For a demo:** add `sql` for the Azure SQL node (+$5/mo) and `WARM=1` for no cold-start (B1,
++$13/mo). Tear down with `make down` after.

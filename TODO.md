@@ -2,6 +2,17 @@
 
 Newest first.
 
+- [x] **Exhibit #5 — observability (App Map).** Live and verified 2026-06-24 (Central US). Web app +
+      API tier instrumented; `pg-ai` (workspace-based, `pg-logs`) provisioned + injected on every
+      `make deploy` via `scripts/wire-observability.sh`. Load generator + fault injection at
+      `/api/observe/load`, page `/exhibits/observability.html`, KQL pack in `docs/observability-kql.md`.
+      Verified via KQL: 3 role nodes (pg-app/pg-api/pg-fn), all dependency edges (HTTP, Cosmos, Service
+      Bus), 18 injected failures on pg-api → red `pg-app→pg-api` edge, cross-process trace correlation
+      web→SB→Functions confirmed. Workspace-based create succeeded in Central US (no fallback needed).
+      **Still to do for the actual demo:** capture a real portal App-Map screenshot into `docs/` (the
+      portal render needs a browser — do it live), and consider deploying with `sql` + `WARM=1` so the
+      SQL node shows and there's no F1 cold-start in front of an audience.
+
 - [x] **Exhibit #4 — fan-out.** Live and verified 2026-06-17 — one publish reached all four
       consumers (Service Bus A+B, Event Grid A+B). Both paths coded (SB topic+subs; Event Grid
       → Storage Queues), consumers in `src/functions/Fanout4.cs`, publish + receipts endpoints

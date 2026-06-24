@@ -4,6 +4,11 @@ using Playground.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHostedService<SbWorker>(); // Exhibit #2: queue consumer (idle if SB unset)
+// Exhibit #5 — App Insights. Picks up APPLICATIONINSIGHTS_CONNECTION_STRING from
+// app settings; with none set it's inert (no transmit), so local/un-wired runs are
+// unaffected. This tier then appears as its own node on the App Map, and the
+// body→API hop is auto-tracked as a dependency with W3C trace correlation.
+builder.Services.AddApplicationInsightsTelemetry();
 var app = builder.Build();
 
 // ── Config (env-driven; empty = that backend is "not bolted on yet") ──────
@@ -64,20 +69,22 @@ if (cosmos is not null)
 
 app.MapGet("/healthz", () => Results.Text("ok"));
 
-app.MapGet("/ssn/sql/{id}", async (string id) =>
+app.MapGet("/ssn/sql/{id}", async (string id, string? fault) =>
 {
     if (string.IsNullOrWhiteSpace(sqlConn))
         return Results.Json(new { ssn = (string?)null, source = "sql-via-api", dbMs = 0.0, error = "SQL not configured (flip enableSql)" });
+    await FaultSpec.Parse(fault).ApplyAsync();   // Exhibit #5: ?fault=error|slow (no-op otherwise)
     var sw = Stopwatch.StartNew();
     var ssn = await Db.ReadSsnSql(sqlConn, id);
     sw.Stop();
     return Results.Json(new { ssn, source = "sql-via-api", dbMs = sw.Elapsed.TotalMilliseconds });
 });
 
-app.MapGet("/ssn/cosmos/{id}", async (string id) =>
+app.MapGet("/ssn/cosmos/{id}", async (string id, string? fault) =>
 {
     if (cosmos is null)
         return Results.Json(new { ssn = (string?)null, source = "cosmos-via-api", dbMs = 0.0, error = "Cosmos not configured (flip enableCosmos)" });
+    await FaultSpec.Parse(fault).ApplyAsync();   // Exhibit #5: ?fault=error|slow (no-op otherwise)
     var sw = Stopwatch.StartNew();
     var ssn = await Db.ReadSsnCosmos(cosmos, id);
     sw.Stop();

@@ -12,5 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/functions/Playground.Functions.csproj" />
+    <ProjectReference Include="../../src/app/Playground.App.csproj" />
+    <ProjectReference Include="../../src/api/Playground.Api.csproj" />
   </ItemGroup>
 </Project>

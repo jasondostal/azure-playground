@@ -16,6 +16,9 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
     <PackageReference Include="Azure.Messaging.EventGrid" Version="4.21.0" />
+    <!-- Exhibit #5: auto distributed tracing + dependency map. Reads
+         APPLICATIONINSIGHTS_CONNECTION_STRING from app settings (injected post-deploy). -->
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="2.22.0" />
   </ItemGroup>
 
 </Project>

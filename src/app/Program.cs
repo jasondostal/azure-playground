@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using Microsoft.ApplicationInsights;   // GetMetric extension on TelemetryClient (Exhibit #5)
 using Azure;
 using Azure.Messaging;
 using Azure.Messaging.EventGrid;
@@ -12,7 +13,15 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     Args = args,
     ContentRootPath = AppContext.BaseDirectory, // wwwroot lives next to the binary
 });
+// Exhibit #5 — App Insights. Reads APPLICATIONINSIGHTS_CONNECTION_STRING from app
+// settings (injected post-deploy); inert when unset. This is the only telemetry
+// wiring in the whole app: dependency calls (SQL, Cosmos, the API hop, Service Bus,
+// Event Grid) and the request graph are captured automatically, which is the whole
+// point of the exhibit — the App Map draws itself from traffic, no agent install.
+builder.Services.AddApplicationInsightsTelemetry();
 var app = builder.Build();
+// Telemetry client for the custom metrics/events the load generator emits.
+var telemetry = app.Services.GetRequiredService<Microsoft.ApplicationInsights.TelemetryClient>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -78,6 +87,106 @@ app.MapGet("/api/config", () => Results.Json(new
     memberId = Db.MemberId,
     memberName = Db.MemberName,
 }));
+
+// ══════════════════════════════════════════════════════════════════════════
+// Exhibit #5 — observability. Drive real traffic through the whole topology so
+// the App Insights Application Map draws itself, and emit a couple of custom
+// metrics/events on top of the auto-captured telemetry. Nothing here installs an
+// agent — instrumentation is the one AddApplicationInsightsTelemetry() call above.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Portal deep links to the App Insights blades (App Map, Live Metrics, …). Built
+// from AI_RESOURCE_ID, injected post-deploy; null until App Insights is wired.
+app.MapGet("/api/observe/links", () =>
+{
+    var links = PortalLinks.Build(Environment.GetEnvironmentVariable("AI_RESOURCE_ID"));
+    return links is null
+        ? Results.Json(new { wired = false, note = "App Insights not wired yet — run `make deploy` (it provisions pg-ai and injects the connection string)." })
+        : Results.Json(new { wired = true, links });
+});
+
+// Generate load: run N end-to-end transactions through web → API → SQL/Cosmos
+// (+ the Service Bus / Event Grid fan-out when chain=full), injecting faults into
+// a faultPct slice so the map shows failed + slow edges. Each transaction emits a
+// custom metric (pg.txn.ms) and event (pg.txn) with outcome/fault dimensions.
+app.MapPost("/api/observe/load", async (int? n, int? faultPct, string? chain) =>
+{
+    var count = Math.Clamp(n ?? 30, 1, 200);
+    var pct = Math.Clamp(faultPct ?? 0, 0, 100);
+    var full = string.Equals(chain, "full", StringComparison.OrdinalIgnoreCase);
+    var id = Db.MemberId;
+
+    var apiOn = http.BaseAddress is not null;
+    var cosmosOn = cosmosDirect is not null;
+    var fanoutOn = full && (sbFanout is not null || egClient is not null);
+    if (!apiOn && !cosmosOn)
+        return Results.Json(new { error = "Nothing to exercise — flip enableApi and/or enableCosmos." });
+
+    var ok = 0; var failed = 0; var injected = 0;
+    var durations = new List<double>(count);
+
+    for (var i = 0; i < count; i++)
+    {
+        // Alternate error/slow across actual fault events (not index parity — the
+        // fault indices can all share a parity, which would make them all one kind).
+        string? faultKind = null;
+        if (LoadPlan.IsFaultIndex(i, count, pct))
+        {
+            faultKind = (injected % 2 == 0) ? "error" : "slow";   // mix red + amber
+            injected++;
+        }
+        var sw = Stopwatch.StartNew();
+        var outcome = "ok";
+        try
+        {
+            if (apiOn)
+            {
+                // Fault rides on both calls so it fires against whichever backend is
+                // wired (SQL off → the Cosmos call carries the red/amber edge).
+                var q = faultKind is null ? "" : $"?fault={faultKind}";
+                await http.GetFromJsonAsync<ApiResp>($"/ssn/sql/{id}{q}");
+                await http.GetFromJsonAsync<ApiResp>($"/ssn/cosmos/{id}{q}");
+            }
+            if (cosmosOn) await Db.ReadSsnCosmos(cosmosDirect!, id);
+            if (fanoutOn)
+            {
+                var corr = Guid.NewGuid().ToString("N");
+                if (sbFanout is not null) await sbFanout.SendMessageAsync(new ServiceBusMessage($"{{\"correlationId\":\"{corr}\"}}"));
+                else if (egClient is not null) await egClient.SendEventAsync(new CloudEvent("playground/fanout", "pg.fanout", new { correlationId = corr }));
+            }
+            ok++;
+        }
+        catch
+        {
+            outcome = "failed";   // an injected 500 (or a real error) bubbles to here
+            failed++;
+        }
+        sw.Stop();
+        var ms = sw.Elapsed.TotalMilliseconds;
+        durations.Add(ms);
+
+        // Custom telemetry layered on top of the auto-captured requests/dependencies.
+        telemetry.GetMetric("pg.txn.ms", "outcome").TrackValue(ms, outcome);
+        telemetry.TrackEvent("pg.txn", new Dictionary<string, string>
+        {
+            ["outcome"] = outcome,
+            ["fault"] = faultKind ?? "none",
+            ["chain"] = full ? "full" : "api",
+        });
+    }
+    telemetry.Flush();   // push before the response so it's queryable promptly
+
+    return Results.Json(new
+    {
+        n = count,
+        ok,
+        failed,
+        faultsInjected = injected,
+        chain = full ? "full" : "api",
+        latency = Stats.Of(durations.ToArray()),
+        note = "Open the App Map — nodes light up by call volume, the faulted edges go amber/red. Telemetry lands in ~30–90s.",
+    });
+});
 
 // ══════════════════════════════════════════════════════════════════════════
 // Exhibit #4 — fan-out, two ways. Publish one event down a path; each consumer

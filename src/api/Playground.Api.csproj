@@ -15,6 +15,9 @@
     <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.46.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
+    <!-- Exhibit #5: this tier shows up as its own node on the App Map, with the
+         body→API call as a tracked dependency edge. -->
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="2.22.0" />
   </ItemGroup>
 
 </Project>

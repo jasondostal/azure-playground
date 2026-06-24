@@ -106,6 +106,7 @@ deploy: ## Zip-deploy code to the apps + inject Cosmos key (run after `make up`)
 	  [ -n "$$FNURL" ] && az webapp config appsettings set -g $(RG) -n "$$APP" --settings FUNCTIONS_BASEURL="$$FNURL" -o none; \
 	fi; \
 	echo ">> live at: $$(az deployment sub show -n $(DEPLOY) --query properties.outputs.appUrl.value -o tsv)"
+	@bash scripts/wire-observability.sh
 	@bash scripts/wire-functions.sh
 
 all: ## up + publish + deploy in one shot

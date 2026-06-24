@@ -24,6 +24,7 @@ Everything is ~$0 at rest **except Azure SQL** (Basic ≈ $5/mo while it exists 
 | Cosmos DB | serverless (pay-per-request) | ~$0 |
 | Storage | Standard_LRS (pay-per-use) | ~$0 |
 | Key Vault / Service Bus | standard / Basic | ~pennies |
+| App Insights + Log Analytics | workspace-based | **$0 idle** (pay per GB ingested) |
 | Azure SQL | Basic | **~$5/mo while it exists** |
 
 `WARM=1` upgrades the plan to **B1 (~$13/mo)** with Always-On — use it only when you want zero cold-start (e.g. a clean latency demo). F1 cold-starts on first hit; for the latency exhibit that doesn't matter (the benchmark warms each path before measuring).
@@ -62,7 +63,9 @@ See [docs/playground-architecture.md](docs/playground-architecture.md) for the f
 
 ## Exhibits
 
-See [EXHIBITS.md](EXHIBITS.md) for the running log of what's been added. Exhibit #1: **SSN reveal latency** — does fronting a database with an API "take seconds"? (No.)
+See [EXHIBITS.md](EXHIBITS.md) for the running log of what's been added. Exhibit #1: **SSN reveal latency** — does fronting a database with an API "take seconds"? (No.) Exhibit #5: **the App Map draws itself** — turn on Application Insights and watch the whole topology, call rates and failures appear from traffic alone, no agent install ([KQL pack](docs/observability-kql.md)).
+
+**Observability is always-on:** `make deploy` provisions a workspace-based Application Insights (`pg-ai`) and injects its connection string into the web + API apps. It's free at rest, so every exhibit's traffic shows up on the App Map for free — that's the point of Exhibit #5.
 
 ## Adding a service / exhibit
 

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exhibit #5 — The App Map draws itself</title>
+<style>
+  :root{
+    --bg:oklch(0.17 0.02 265);--panel:oklch(0.22 0.03 265);--panel2:oklch(0.25 0.03 265);
+    --line:oklch(0.32 0.03 265);--text:oklch(0.93 0.01 265);--muted:oklch(0.68 0.02 265);
+    --accent:oklch(0.78 0.17 150);--blue:oklch(0.72 0.15 230);--amber:oklch(0.8 0.15 75);
+    --red:oklch(0.65 0.2 25);--ok:oklch(0.78 0.17 150);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:1.5rem}
+  a.back{color:var(--muted);text-decoration:none;font-size:.9rem}a.back:hover{color:var(--accent)}
+  h1{font-size:1.5rem;margin:.6rem 0 .2rem}
+  .sub{color:var(--muted);margin:0 0 1.4rem}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
+  .panel h2{font-size:1.05rem;margin:0 0 .6rem}
+  .banner{background:oklch(0.28 0.06 75);border:1px solid oklch(0.8 0.15 75);border-radius:10px;padding:.7rem 1rem;margin-bottom:1.2rem;font-size:.92rem}
+  code{background:var(--panel2);padding:.05rem .35rem;border-radius:4px;font-size:.85em}
+  button{cursor:pointer;font:inherit;font-weight:700;color:var(--bg);background:var(--accent);border:0;border-radius:9px;padding:.6rem 1.1rem}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
+  button.ghost:hover{border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
+  label{font-size:.9rem;color:var(--muted)}
+  input[type=number]{width:5rem;font:inherit;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.4rem .5rem}
+  select{font:inherit;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.4rem .5rem}
+  pre.flow{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;font-size:.8rem;overflow:auto;color:var(--text);margin:.6rem 0 0}
+  .links{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.6rem}
+  a.link{display:block;text-decoration:none;color:inherit;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:.7rem .8rem;transition:border-color .15s,transform .15s}
+  a.link:hover{border-color:var(--accent);transform:translateY(-1px)}
+  a.link b{display:block;font-size:.95rem}a.link span{font-size:.78rem;color:var(--muted)}
+  a.link.dim{opacity:.4;pointer-events:none}
+  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:.6rem;margin-top:1rem}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:.6rem .8rem}
+  .stat .v{font-size:1.3rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .stat .k{font-size:.75rem;color:var(--muted)}
+  .stat.bad .v{color:var(--red)}.stat.warn .v{color:var(--amber)}.stat.good .v{color:var(--ok)}
+  .status{margin-top:1rem;color:var(--muted);font-size:.9rem;min-height:1.2em}
+  table{width:100%;border-collapse:collapse;font-size:.88rem}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:.82rem;padding:.35rem .5rem}
+  td{padding:.45rem .5rem;border-top:1px solid var(--line);vertical-align:top}
+  .vs td:first-child{color:var(--muted)}
+  .win{color:var(--accent)}.tie{color:var(--muted)}
+  ul.tour{margin:.4rem 0 0;padding-left:1.1rem}ul.tour li{margin:.3rem 0;color:var(--muted)}
+  ul.tour li b{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← back to the lab</a>
+  <h1>Exhibit #5 — The App Map draws itself</h1>
+  <p class="sub">Every other exhibit already makes calls across App Service, the API tier, SQL, Cosmos, Service Bus, Event Grid and Functions. Nobody was watching. Turn on Application Insights — one resource, one connection string, no agent to install on any host — and the whole topology, call rates, latencies and failures appear from the traffic itself.</p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="panel">
+    <h2>What this drives</h2>
+    <div class="sub" style="margin:0">A transaction here fans across the stack. App Insights captures each hop as a dependency and stitches them with W3C trace context, so the map shows the edges and the end-to-end trace — automatically.</div>
+    <pre class="flow">web app ──HTTP──▶ API tier ──▶ Azure SQL
+   │                    └──▶ Cosmos DB
+   ├──direct──▶ Cosmos DB
+   └──publish─▶ Service Bus / Event Grid ──▶ Functions ──▶ Cosmos   (chain = full)</pre>
+  </div>
+
+  <div class="panel">
+    <h2>Generate load</h2>
+    <div class="row">
+      <label>transactions <input id="n" type="number" value="60" min="1" max="200"></label>
+      <label>fault % <input id="fault" type="number" value="20" min="0" max="100"></label>
+      <label>chain
+        <select id="chain">
+          <option value="api">web → API → SQL/Cosmos</option>
+          <option value="full">full (+ Service Bus / Event Grid → Functions)</option>
+        </select>
+      </label>
+      <button id="go">Run load</button>
+    </div>
+    <div id="stats" class="stats" hidden></div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Open it in the portal</h2>
+    <div class="sub" style="margin:0 0 .8rem">Telemetry lands ~30–90s after a run. Then:</div>
+    <div id="links" class="links">
+      <a class="link dim" data-k="appMap"><b>Application Map ▸</b><span>auto-discovered topology</span></a>
+      <a class="link dim" data-k="liveMetrics"><b>Live Metrics ▸</b><span>1s stream, no sampling</span></a>
+      <a class="link dim" data-k="failures"><b>Failures ▸</b><span>the faulted edges</span></a>
+      <a class="link dim" data-k="performance"><b>Performance ▸</b><span>dependency percentiles</span></a>
+      <a class="link dim" data-k="logs"><b>Logs (KQL) ▸</b><span>query the raw telemetry</span></a>
+    </div>
+    <ul class="tour">
+      <li>On the <b>App Map</b>, node size tracks call volume and the ring turns <b>red</b> where the injected faults hit — click a node → <em>Investigate failures</em> drops straight into the failing dependency.</li>
+      <li><b>Live Metrics</b> shows the run happening in real time (sub-second), unsampled — leave it open and click Run again.</li>
+      <li>The <b>Logs</b> blade is the differentiator: the same data as KQL. The query pack is in <code>docs/observability-kql.md</code> — custom metric <code>pg.txn.ms</code> and event <code>pg.txn</code> carry outcome/fault dimensions the auto-telemetry doesn't.</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>The honest pitch vs Dynatrace</h2>
+    <table class="vs">
+      <thead><tr><th>For an Azure-native app</th><th>Application Insights</th><th>Dynatrace</th></tr></thead>
+      <tbody>
+        <tr><td>Distributed tracing + app map</td><td class="win">bundled, zero-config, no per-host agent rollout</td><td>OneAgent — excellent, but per-host/DPS licensed</td></tr>
+        <tr><td>Ad-hoc analytics</td><td class="win">KQL over all telemetry, joins, custom metrics</td><td>DQL / canned dashboards</td></tr>
+        <tr><td>Cost at rest / low traffic</td><td class="win">$0 idle, pay per GB ingested</td><td>host-hours / consumption units add up fast</td></tr>
+        <tr><td>Causal root-cause AI</td><td class="tie">basic smart detection</td><td class="win">Davis AI — genuinely strong</td></tr>
+        <tr><td>Full-stack infra / OS / multicloud</td><td class="tie">Azure Monitor, Azure-centric</td><td class="win">deep host + multicloud coverage</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin:.8rem 0 0">Not a clean sweep, and pretending it is would be the fast way to lose the room. For an <em>Azure-native</em> stack the App Map + KQL + cost story is the strong, defensible case: you get most of the observability value already paid for in the platform, with no agents to deploy. Dynatrace earns its price where you need Davis-grade root-cause or full-fleet infrastructure coverage.</p>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+async function init(){
+  let cfg={};try{cfg=await(await fetch("/api/config")).json();}catch{}
+  const miss=[];
+  if(!cfg.api)miss.push("<code>enableApi</code>");
+  if(!cfg.cosmos)miss.push("<code>enableCosmos</code>");
+  if(miss.length){const b=$("#banner");b.hidden=false;
+    b.innerHTML="For the full picture flip "+miss.join(" + ")+". Recommended: <code>make all SVC=sql,cosmos,api,sb,storage,eg,fn SB_TOPICS=1</code> — then every tier shows on the map.";}
+  try{
+    const r=await(await fetch("/api/observe/links")).json();
+    if(r.wired){for(const a of document.querySelectorAll("a.link")){const u=r.links[a.dataset.k];if(u){a.href=u;a.target="_blank";a.classList.remove("dim");}}}
+    else{$("#status").textContent=r.note;}
+  }catch{}
+}
+function stat(k,v,cls){return `<div class="stat ${cls||''}"><div class="v">${v}</div><div class="k">${k}</div></div>`;}
+$("#go").onclick=async()=>{
+  const n=+$("#n").value, fault=+$("#fault").value, chain=$("#chain").value;
+  $("#go").disabled=true;$("#status").textContent="running "+n+" transactions…";$("#stats").hidden=true;
+  try{
+    const r=await(await fetch(`/api/observe/load?n=${n}&faultPct=${fault}&chain=${chain}`,{method:"POST"})).json();
+    if(r.error){$("#status").textContent=r.error;$("#go").disabled=false;return;}
+    const L=r.latency||{};
+    $("#stats").innerHTML=
+      stat("transactions",r.n)+
+      stat("ok",r.ok,"good")+
+      stat("failed",r.failed,r.failed?"bad":"")+
+      stat("faults injected",r.faultsInjected,r.faultsInjected?"warn":"")+
+      stat("p50 ms",L.p50?L.p50.toFixed(0):"—")+
+      stat("p95 ms",L.p95?L.p95.toFixed(0):"—");
+    $("#stats").hidden=false;
+    $("#status").textContent=r.note;
+  }catch(e){$("#status").textContent="error: "+e;}
+  $("#go").disabled=false;
+};
+init();
+</script>
+</body>
+</html>

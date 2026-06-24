@@ -70,6 +70,11 @@
         <p>The AWS SNS→SQS→Lambda fan-out, rebuilt in Azure two ways: a Service Bus topic with subscriptions, and Event Grid into Storage Queues. Publish once, watch both consumers receive a copy.</p>
         <div class="chips"><span class="chip">Service Bus</span><span class="chip">Event Grid</span><span class="chip">Storage Queues</span><span class="chip">Functions</span></div>
       </a>
+      <a class="card" href="/exhibits/observability.html">
+        <h3><span class="num">#5</span> &nbsp;The App Map draws itself</h3>
+        <p>Turn on Application Insights and the whole topology, call rates and failures appear from traffic alone — no agent install. Generate load, inject faults, watch the map light up. The honest case for App Insights over Dynatrace.</p>
+        <div class="chips"><span class="chip">App Insights</span><span class="chip">distributed tracing</span><span class="chip">KQL</span><span class="chip">App Map</span></div>
+      </a>
     </div>
   </main>
   <footer>composes the same modules as azure-platform-iac, dialled to cheap · <code>make down</code> to vanish it all</footer>
